@@ -66,7 +66,7 @@ if [[ -z "$PINMAME_DIR" ]]; then
         fi
     done
 fi
-[[ -z "$PINMAME_DIR" ]] && die "PINMAME_DIR not set. Run setup-pinball.sh first."
+[[ -z "$PINMAME_DIR" ]] && die "PINMAME_DIR not set. Run setup-pinball.py first."
 
 ROMS_DIR="$PINMAME_DIR/roms"
 mkdir -p "$ROMS_DIR"

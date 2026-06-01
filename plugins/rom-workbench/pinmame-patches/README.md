@@ -53,7 +53,7 @@ cmake --build build_macos --target pinmame_shared -j$(sysctl -n hw.logicalcpu)
 cp build_macos/libpinmame.3.*.dylib <repo>/.claude/skills/record-pinball/bin/libpinmame.dylib
 ```
 
-`setup-pinball.sh` does all of the above automatically (including the CMakeLists.txt copy/remove) when no pre-built dylib is in `bin/` for the current arch.
+`setup-pinball.py` does all of the above automatically (including the CMakeLists.txt copy/remove) when no pre-built dylib is in `bin/` for the current arch.
 
 ## Rebuild — Windows (x64, MSVC)
 

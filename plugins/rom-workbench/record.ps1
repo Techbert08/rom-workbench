@@ -53,10 +53,10 @@ $vpinball  = Get-RpEnvVar 'VPINBALL_DIR'
 $vpinmame  = Get-RpEnvVar 'VPINMAME_DIR'
 
 if (-not $vpinball -or -not (Test-Path $vpinball)) {
-    throw "VPINBALL_DIR not set or missing (run pinball-setup\setup-pinball.ps1)."
+    throw "VPINBALL_DIR not set or missing (run pinball-setup\setup-pinball.py)."
 }
 if (-not $vpinmame -or -not (Test-Path $vpinmame)) {
-    throw "VPINMAME_DIR not set or missing (run pinball-setup\setup-pinball.ps1)."
+    throw "VPINMAME_DIR not set or missing (run pinball-setup\setup-pinball.py)."
 }
 
 if (-not $OutDir) {
@@ -74,7 +74,7 @@ $metaPath    = Join-Path $OutDir 'session.meta.json'
 
 $romZip = Join-Path (Join-Path $vpinmame 'roms') "$Rom.zip"
 if (-not (Test-Path $romZip)) {
-    throw "ROM zip not staged at $romZip. Run pinball-setup\setup-pinball.ps1, or place $Rom.zip in %VPINMAME_DIR%\roms\."
+    throw "ROM zip not staged at $romZip. Run pinball-setup\setup-pinball.py, or place $Rom.zip in %VPINMAME_DIR%\roms\."
 }
 $romZipSha256 = Get-FileSha256 -Path $romZip
 
@@ -179,7 +179,7 @@ if (Test-Path $switchLog) {
     }
 } else {
     Write-Warn2 "No switchlog.jsonl produced — the deployed VPinMAME64.dll may predate the switch recorder."
-    Write-Warn2 "Verify setup-pinball.ps1 ran successfully and VPINMAME_DIR\VPinMAME64.dll is the patched version."
+    Write-Warn2 "Verify setup-pinball.py ran successfully and VPINMAME_DIR\VPinMAME64.dll is the patched version."
 }
 
 # --- Write session.meta.json -------------------------------------------------

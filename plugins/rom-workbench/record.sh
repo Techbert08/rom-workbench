@@ -17,7 +17,7 @@
 #   --config  ./config.json (written by pinball-setup/add-rom.sh)
 #
 # Requires: VPINBALL_DIR and PINMAME_DIR set, and uv on PATH
-#           (run pinball-setup/setup-pinball.sh).
+#           (run pinball-setup/setup-pinball.py).
 # ROM zip must be staged under $PINMAME_DIR/roms/ (run pinball-setup/add-rom.sh).
 
 set -euo pipefail
@@ -58,13 +58,17 @@ done
 PINMAME_DIR="${PINMAME_DIR:-}"
 VPINBALL_DIR="${VPINBALL_DIR:-}"
 
-[[ -n "$PINMAME_DIR" ]]   || die "PINMAME_DIR not set. Run pinball-setup/setup-pinball.sh and source ~/.zshenv."
-[[ -n "$VPINBALL_DIR" ]]  || die "VPINBALL_DIR not set. Run pinball-setup/setup-pinball.sh and source ~/.zshenv."
+[[ -n "$PINMAME_DIR" ]]   || die "PINMAME_DIR not set. Run pinball-setup/setup-pinball.py and source ~/.zshenv."
+[[ -n "$VPINBALL_DIR" ]]  || die "VPINBALL_DIR not set. Run pinball-setup/setup-pinball.py and source ~/.zshenv."
 [[ -d "$PINMAME_DIR" ]]   || die "PINMAME_DIR=$PINMAME_DIR does not exist."
 [[ -d "$VPINBALL_DIR" ]]  || die "VPINBALL_DIR=$VPINBALL_DIR does not exist."
 
-VPX_EXE="/Applications/VPinballX_GL.app/Contents/MacOS/VPinballX_GL"
-[[ -f "$VPX_EXE" ]] || die "VPinballX_GL not found at $VPX_EXE. Install it from pinball-setup/setup-pinball.sh or drag VPinballX_GL.app to /Applications."
+# VPX lives under VPINBALL_DIR (set by setup-pinball.py); fall back to a
+# /Applications install for users who dragged the app there manually.
+VPX_APP="$VPINBALL_DIR/VPinballX_GL.app"
+[[ -d "$VPX_APP" ]] || VPX_APP="/Applications/VPinballX_GL.app"
+VPX_EXE="$VPX_APP/Contents/MacOS/VPinballX_GL"
+[[ -f "$VPX_EXE" ]] || die "VPinballX_GL not found at $VPX_EXE. Run pinball-setup/setup-pinball.py, or drag VPinballX_GL.app into VPINBALL_DIR."
 
 ROM_ZIP="$PINMAME_DIR/roms/$ROM.zip"
 [[ -f "$ROM_ZIP" ]] || die "ROM zip not staged at $ROM_ZIP. Run pinball-setup/add-rom.sh --rom-zip <path>."
@@ -168,7 +172,7 @@ fi
 
 # Must launch via 'open -a' so macOS registers the app with the window server.
 # Direct binary exec skips LaunchServices and the SDL window never gets focus.
-VPX_APP="/Applications/VPinballX_GL.app"
+# VPX_APP was resolved above (VPINBALL_DIR, or /Applications fallback).
 open -a "$VPX_APP" --args -DisableTrueFullscreen -play "$TABLE"
 
 # Give LaunchServices a moment, then find the PID.

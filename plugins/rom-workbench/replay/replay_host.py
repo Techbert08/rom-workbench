@@ -197,7 +197,7 @@ class PinmameDebugEvent(ctypes.Structure):
 
 def load_libpinmame(pinmame_dir: Path) -> ctypes.CDLL:
     # The asset ships with a version suffix (e.g. libpinmame-3.6.dll). Prefer the
-    # canonical name (created by setup.ps1) if it exists; fall back to any match.
+    # canonical name (created by setup-pinball.py) if it exists; fall back to any match.
     if os.name == "nt":
         patterns = ("libpinmame.dll", "libpinmame*.dll")
     elif sys.platform == "darwin":

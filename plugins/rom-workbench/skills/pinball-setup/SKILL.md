@@ -18,13 +18,17 @@ For everyday "analyze a ROM" / "replay a session" / "set a breakpoint" requests,
 
 ## What gets installed and where
 
+Everything lands under one per-user data root (see "Setup scripts" below):
+`%LOCALAPPDATA%\rom-workbench\` on Windows, `~/Library/Application Support/rom-workbench/`
+on macOS, `~/.local/share/rom-workbench/` on Linux.
+
 ### Windows
 
 | Component | Where | Env var |
 |---|---|---|
-| Visual Pinball X 10.8.0 | `%LOCALAPPDATA%\Programs\vpinball` | `VPINBALL_DIR` |
-| PinMAME standalone + libpinmame | `%LOCALAPPDATA%\Programs\pinmame` | `PINMAME_DIR` |
-| VPinMAME COM (regsvr32-registered) | `%LOCALAPPDATA%\Programs\vpinmame` | `VPINMAME_DIR` |
+| Visual Pinball X 10.8.0 | `<root>\vpinball` | `VPINBALL_DIR` |
+| PinMAME standalone + libpinmame | `<root>\pinmame` | `PINMAME_DIR` |
+| VPinMAME COM (regsvr32-registered) | `<root>\vpinmame` | `VPINMAME_DIR` |
 | uv (installed if missing) | `%USERPROFILE%\.local\bin` | — |
 | Patched VPinMAME64.dll | deployed over the installed VPinMAME | — |
 | Patched libpinmame (debugger API) | deployed over the installed PinMAME | — |
@@ -33,31 +37,56 @@ For everyday "analyze a ROM" / "replay a session" / "set a breakpoint" requests,
 
 | Component | Where | Env var |
 |---|---|---|
-| Visual Pinball X (macOS GL build) | `~/Library/Application Support/VPinball` | `VPINBALL_DIR` |
-| Patched libpinmame.dylib | `~/Library/Application Support/PinMAME` | `PINMAME_DIR` |
+| Visual Pinball X (macOS GL build) | `<root>/vpinball` | `VPINBALL_DIR` |
+| Patched libpinmame.dylib | `<root>/pinmame` | `PINMAME_DIR` |
 | uv (installed if missing) | `~/.local/bin` | — |
 
-`libpinmame.dylib` is **built from source** by `setup-pinball.sh` (no macOS
-prebuilt is distributed by upstream PinMAME). The patched source lives in
-`../pinmame` (relative to the project root), which `setup-pinball.sh` auto-detects.
+On macOS the patched `libpinmame.dylib` ships prebuilt in `bin/` for the common
+case; `setup-pinball.py` only **builds from source** (from `--pinmame-src`,
+default `../pinmame` beside the repo) when no arch-matched prebuilt is available.
 Env vars are written to `~/.zshenv` and `~/.bash_profile`.
 
 ## Setup scripts
 
-### `setup-pinball.sh` — macOS toolchain installer
+### `setup-pinball.py` — cross-platform toolchain installer
+
+One stdlib-only Python script handles **both** macOS and Windows (replacing the
+old `setup-pinball.sh` / `setup-pinball.ps1` pair). Run it with either Python or uv:
 
 ```bash
-bash '${CLAUDE_PLUGIN_ROOT}/setup-pinball.sh' [--force] [--pinmame-src <path>]
+# Fresh machine (no uv yet): plain Python — it installs uv, then the tools.
+python3 '${CLAUDE_PLUGIN_ROOT}/setup-pinball.py' [--force] [--install-root <dir>] [--pinmame-src <path>]
+
+# Once uv is available, the uv-native invocation works too:
+uv run '${CLAUDE_PLUGIN_ROOT}/setup-pinball.py'
 ```
 
-Idempotent. Steps:
-1. Ensure `uv` is installed (install via https://astral.sh/uv if missing) and verify build prerequisites (cmake, git, clang). The Python tools run via `uv run`, so uv — not a system Python — is the only Python prerequisite.
-2. Download Visual Pinball X macOS build (skips gracefully if no macOS asset exists for the pinned release).
-3. Build patched `libpinmame.dylib` from `--pinmame-src` (default: `../pinmame` relative to the project root). Applies the three patches in `record-pinball/pinmame-patches/` if the branch doesn't exist yet.
-4. Install `libpinmame.dylib` to `PINMAME_DIR` and (if found) into the VPX app bundle.
-5. Write `PINMAME_DIR`, `VPINBALL_DIR` to `~/.zshenv` and `~/.bash_profile`.
+Everything installs under a **per-user data directory** (no admin needed for the
+files themselves), with `vpinball/`, `pinmame/` and — on Windows — `vpinmame/`
+underneath, plus a `cache/`:
 
-### `add-rom.sh` — macOS: register a game
+| OS | Install root |
+|---|---|
+| macOS | `~/Library/Application Support/rom-workbench/` |
+| Windows | `%LOCALAPPDATA%\rom-workbench\` |
+| Linux | `$XDG_DATA_HOME` (or `~/.local/share`)`/rom-workbench/` |
+
+Override with `--install-root`. Idempotent; pass `--force` to re-download/rebuild.
+
+Steps:
+1. **Ensure uv** (install via https://astral.sh/uv if missing). The Python tools run via `uv run`, so uv — not a system Python — is the only ongoing Python prerequisite.
+2. **Visual Pinball X** — download + install into `<root>/vpinball/` (skips gracefully if the pinned release has no asset for this OS/arch; replay doesn't need VPX).
+3. **Patched libpinmame**:
+   - **macOS** — install `libpinmame.dylib` into `<root>/pinmame/` (prefer the arch-matched prebuilt in `bin/`; otherwise build from `--pinmame-src`, default `../pinmame` beside the repo). Deploy it into the VPX bundle, ad-hoc re-sign, and run a Gatekeeper trial-launch.
+   - **Windows** — download PinMAME standalone + libpinmame into `<root>/pinmame/` and deploy the patched `pinmame64.dll`; download VPinMAME COM into `<root>/vpinmame/`, deploy the patched `VPinMAME64.dll`, and `regsvr32`-register it (needs an elevated shell once — the script detects this and prints the exact relaunch command rather than failing).
+4. **Persist env vars** at user scope: `VPINBALL_DIR`, `PINMAME_DIR`, and (Windows) `VPINMAME_DIR`. On macOS/Linux these are written to `~/.zshenv` and `~/.bash_profile`; on Windows to the user environment (HKCU).
+
+Downloads are SHA-256 verified against a sidecar recorded on first use (trust-on-first-use). To pin upstream hashes, fill in the empty `expected_sha` constants near the top of the script.
+
+### `add-rom.sh` / `add-rom.ps1` — register a game
+
+Per-game registration stays platform-native (`add-rom.sh` on macOS, `add-rom.ps1`
+on Windows):
 
 ```bash
 bash '${CLAUDE_PLUGIN_ROOT}/add-rom.sh' \
@@ -70,26 +99,7 @@ bash '${CLAUDE_PLUGIN_ROOT}/add-rom.sh' \
 
 Copies the ROM zip to `$PINMAME_DIR/roms/<rom>.zip` and records the VPX table path in `./config.json`.
 
----
-
-### `setup-pinball.ps1` — dynamic-analysis / replay tools
-
-```powershell
-& '${CLAUDE_PLUGIN_ROOT}/setup-pinball.ps1' [-Force]
-```
-
-**Needs an Administrator PowerShell once** for `regsvr32`. If not elevated, the script detects this and prints the exact relaunch command rather than failing silently.
-
-Idempotent. Steps:
-1. Verify PowerShell 7+ and ensure `uv` is installed (install via https://astral.sh/uv if missing). The Python tools run via `uv run`, so uv — not a system Python — is the only Python prerequisite.
-2. Download Visual Pinball X 10.8.0.
-3. Download PinMAME 3.6 standalone + libpinmame.
-4. Download VPinMAME 3.6 COM, `regsvr32` it.
-5. Deploy the patched `VPinMAME64.dll` and `pinmame64.dll` from `<record-pinball>\bin\` over the installed DLLs. Backs up the originals as `*.orig` first.
-
-Downloads are SHA-256 verified against a sidecar file recorded on first download. To switch to upstream-pinned hashes, paste the recorded hash into the `Expected*Sha256` constants near the top of the script.
-
-### `add-rom.ps1` — register a game
+#### `add-rom.ps1` (Windows)
 
 ```powershell
 & '${CLAUDE_PLUGIN_ROOT}/add-rom.ps1' `
@@ -156,39 +166,37 @@ $PinmameSrc = 'C:\path\to\your\pinmame'   # your local clone of the patched bran
     "$PinmameSrc\build\libpinmame\pinmame_shared.vcxproj" `
     /p:Configuration=Release /p:Platform=x64 /m /nologo
 
-# Copy into the skill bin/ and re-run setup-pinball.ps1 — its deploy step
+# Copy into the plugin bin/ and re-run setup-pinball.py — its deploy step
 # (re)installs the DLL into PINMAME_DIR.
 Copy-Item "$PinmameSrc\build\libpinmame\Release\pinmame64.dll" `
-          <repo>\.claude\skills\record-pinball\bin\pinmame64.dll -Force
-& '${CLAUDE_PLUGIN_ROOT}/setup-pinball.ps1'
+          ${CLAUDE_PLUGIN_ROOT}\bin\pinmame64.dll -Force
+uv run '${CLAUDE_PLUGIN_ROOT}/setup-pinball.py'
 ```
 
-The deploy step alone (skipping the downloads) is the bottom ~30 lines of `setup-pinball.ps1`; copy directly to `%LOCALAPPDATA%\Programs\pinmame\libpinmame*.dll` if you want to skip the env-var checks.
+If you'd rather skip the downloads/env checks entirely, the patched DLL just needs to land on top of the installed one: copy it directly over `%LOCALAPPDATA%\rom-workbench\pinmame\libpinmame*.dll`.
 
 Forgetting the deploy step makes `replay.py` fall back to the un-patched DLL. The giveaway error is `PinmameDebugAttach not found`.
 
 ## Prerequisites
 
+To launch `setup-pinball.py` the first time you need **either** uv **or** any
+Python 3.9+ (`python3 setup-pinball.py` will then install uv for you). After that:
+
 ### Windows
-- **PowerShell 7+** (`pwsh`).
-- **uv** — installed automatically by `setup-pinball.ps1` if missing; runs every Python tool (no system Python needed).
-- **One Administrator PowerShell** for `regsvr32 VPinMAME.dll`.
+- **PowerShell 7+** (`pwsh`) — used by `record.ps1` / `add-rom.ps1`.
+- **One Administrator PowerShell** for the one-time `regsvr32 VPinMAME.dll` step.
 
 ### macOS
-- **uv** — installed automatically by `setup-pinball.sh` if missing; runs every Python tool (no system Python needed).
-- **cmake 3.25+** (`brew install cmake`).
-- **Xcode Command Line Tools** (`xcode-select --install`).
-- **git** (bundled with Xcode CLT).
+- **cmake 3.25+**, **Xcode Command Line Tools** (`xcode-select --install`), **git** — only needed for the rare libpinmame *source-build* fallback (the prebuilt `bin/libpinmame.dylib` covers the common case). `setup-pinball.py` checks these only when it actually has to build.
 
-Each script verifies its own dependencies and exits with a clear message if anything is missing.
+`uv` is installed by `setup-pinball.py` if missing and then runs every Python tool — no system Python is needed for day-to-day work.
 
 ## File layout
 
 ```
 ${CLAUDE_PLUGIN_ROOT}/
 ├── SKILL.md                # this file
-├── setup-pinball.ps1       # VP + PinMAME + VPinMAME installer (for record-pinball; Windows)
-├── setup-pinball.sh        # libpinmame.dylib + VPX installer (for record-pinball; macOS)
+├── setup-pinball.py        # cross-platform VP + PinMAME (+ VPinMAME on Windows) installer
 ├── add-rom.ps1             # per-game ROM + table registration (Windows)
 └── add-rom.sh              # per-game ROM + table registration (macOS)
 ```

@@ -342,7 +342,7 @@ Write-Ok "Written: $OutZip ($([math]::Round((Get-Item $OutZip).Length / 1KB, 0))
 if ($Deploy) {
     Write-Step "Deploying to VPinMAME"
     $vpinmame = [System.Environment]::GetEnvironmentVariable('VPINMAME_DIR', 'User')
-    if (-not $vpinmame) { Write-Warn2 "VPINMAME_DIR not set; skipping deploy. Run record-pinball/setup.ps1 first." }
+    if (-not $vpinmame) { Write-Warn2 "VPINMAME_DIR not set; skipping deploy. Run pinball-setup/setup-pinball.py first." }
     else {
         $dest = Join-Path $vpinmame "roms\${romStem}_modded.zip"
         Copy-Item -Path $OutZip -Destination $dest -Force

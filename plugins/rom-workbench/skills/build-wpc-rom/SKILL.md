@@ -39,7 +39,7 @@ uv run .\.claude\skills\record-pinball\replay.py `
 - **PowerShell 7+** — `build.ps1` uses `#requires -Version 7.0`.
 - **ROM zip** in `.\orig\` (or pass `-RomZip <path>`). The build never modifies `orig/` — it reads the source zip and writes to `dist/`.
 - **Patch specs** in `.\source\patches\` (or pass `-PatchDir <path>`). May be empty; the script will still fix the checksum / disable it.
-- **`-Deploy` only**: `VPINMAME_DIR` env var set (run `pinball-setup\setup-pinball.ps1` once).
+- **`-Deploy` only**: `VPINMAME_DIR` env var set (run `pinball-setup/setup-pinball.py` once).
 
 ## Patch spec format
 

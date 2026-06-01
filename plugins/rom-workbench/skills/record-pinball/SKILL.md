@@ -32,7 +32,7 @@ use **`wpc-investigate`**.
 
 ## Quickstart
 
-Assumes you've already run `pinball-setup\setup-pinball.ps1` and
+Assumes you've already run `pinball-setup/setup-pinball.py` and
 `pinball-setup\add-rom.ps1` for your game. From a PowerShell 7 prompt
 (any working directory):
 
@@ -99,7 +99,7 @@ Sessions are written to `.\sessions\<UTC>\` relative to the current working dire
 `record.ps1` is the Windows recorder; `record.sh` is its macOS counterpart, and both
 produce an identical `session.jsonl`.
 
-Launches Visual Pinball with the full table. The patched `VPinMAME64.dll` (deployed by `setup-pinball.ps1` Step 5 from `bin\VPinMAME64.dll`) runs inside VP's process and captures the replayable switch stream via one env var set in the child:
+Launches Visual Pinball with the full table. The patched `VPinMAME64.dll` (deployed by `setup-pinball.py` from `bin\VPinMAME64.dll`) runs inside VP's process and captures the replayable switch stream via one env var set in the child:
 
 - `VPINMAME_SWITCHLOG=<session>\switchlog.jsonl` — VP drives the playfield through the COM `Controller.Switch`/`put_Switches` path, which funnels through `vp_putSwitch`; the patched DLL logs every externally-driven switch *edge* there as a JSONL `"switch"` record stamped with the **emulation clock** (`timer_get_time`). When VP closes, `record.ps1` folds these into `session.jsonl` as `kind:"switch"` records (after the meta line). This is what `replay.py`/`replay_host.py` inject via `PinmameSetSwitch` — the same `swMatrix` plane VP drove, so gameplay reproduces faithfully.
 
@@ -466,7 +466,7 @@ are Python because they're pure orchestration over `replay_host.py`.
 ## References
 
 - libpinmame header (upstream): https://github.com/vpinball/pinmame/blob/master/src/libpinmame/libpinmame.h
-- Our patched PinMAME source: the **`switch-recorder` branch off `github.com/vpinball/pinmame`** (`src/libpinmame/libpinmame.{h,cpp}`) — adds the `PinmameDebug*` API and the m6809 dispatch-loop / RM/WM hooks, the `vp_putSwitch` switch recorder (`VPINMAME_SWITCHLOG`), and the closed-loop pacing exports `PinmameGetEmulationTime`/`PinmameTimeFenceReached` (backed by `time_fence_published_time` in `cpuexec.c` and helpers in `wpc/vpintf.c`). **The prebuilt DLLs ship in `bin/` and are all you need for replay + debug of any WPC game — the source is only required to rebuild/extend them.** To rebuild: the patch set is vendored in **`pinmame-patches/`** (3 `git am`-able patches + a README with the pinned upstream base commit and apply/build steps). Clone upstream at that base, `git am` the patches, build (`pinmame_shared.vcxproj` under `build/libpinmame/` → `Release/pinmame64.dll`; the VP-side recorder is `build/vpinmame/vpinmame.vcxproj` → `VPinMAME64.dll`), then copy the DLL into `bin/` AND re-run `pinball-setup\setup-pinball.ps1` to deploy — forgetting the deploy makes the wrapper silently fall back to the unpatched DLL.
+- Our patched PinMAME source: the **`switch-recorder` branch off `github.com/vpinball/pinmame`** (`src/libpinmame/libpinmame.{h,cpp}`) — adds the `PinmameDebug*` API and the m6809 dispatch-loop / RM/WM hooks, the `vp_putSwitch` switch recorder (`VPINMAME_SWITCHLOG`), and the closed-loop pacing exports `PinmameGetEmulationTime`/`PinmameTimeFenceReached` (backed by `time_fence_published_time` in `cpuexec.c` and helpers in `wpc/vpintf.c`). **The prebuilt DLLs ship in `bin/` and are all you need for replay + debug of any WPC game — the source is only required to rebuild/extend them.** To rebuild: the patch set is vendored in **`pinmame-patches/`** (3 `git am`-able patches + a README with the pinned upstream base commit and apply/build steps). Clone upstream at that base, `git am` the patches, build (`pinmame_shared.vcxproj` under `build/libpinmame/` → `Release/pinmame64.dll`; the VP-side recorder is `build/vpinmame/vpinmame.vcxproj` → `VPinMAME64.dll`), then copy the DLL into `bin/` AND re-run `pinball-setup/setup-pinball.py` to deploy — forgetting the deploy makes the wrapper silently fall back to the unpatched DLL.
 - PinMAME releases: https://github.com/vpinball/pinmame/releases
 - Visual Pinball X releases: https://github.com/vpinball/vpinball/releases
 - VPinMAME COM interface notes: https://github.com/tanseydavid/WPCResources/blob/master/PinMAME/pinmame-debugger-help.md

@@ -60,8 +60,8 @@ Set-StrictMode -Version Latest
 
 $vpinmame = Get-RpEnvVar 'VPINMAME_DIR'
 $vpinball = Get-RpEnvVar 'VPINBALL_DIR'
-if (-not $vpinmame) { throw "VPINMAME_DIR not set. Run setup.ps1 first." }
-if (-not $vpinball) { throw "VPINBALL_DIR not set. Run setup.ps1 first." }
+if (-not $vpinmame) { throw "VPINMAME_DIR not set. Run setup-pinball.py first." }
+if (-not $vpinball) { throw "VPINBALL_DIR not set. Run setup-pinball.py first." }
 
 if (-not (Test-Path $RomZip)) { throw "ROM zip not found: $RomZip" }
 $RomZip = (Resolve-Path $RomZip).Path

@@ -60,7 +60,7 @@ def env_var(name: str) -> str:
     v = os.environ.get(name) or ""
     if not v:
         raise SystemExit(
-            f"{name} not set. Run pinball-setup\\setup-pinball.ps1 first."
+            f"{name} not set. Run pinball-setup/setup-pinball.py first."
         )
     return v
 
