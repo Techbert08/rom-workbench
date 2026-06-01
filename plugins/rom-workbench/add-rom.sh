@@ -114,13 +114,15 @@ fi
 
 step "VPX table for ${ROM}"
 
-PYTHON_EXE="${PYTHON_FOR_RP:-python3}"
+# Read/write config.json through uv-managed Python (no system Python required;
+# uv provisions an interpreter on demand). These helpers use only stdlib.
+PYRUN=(uv run python)
 
 # Use Python to read/write config.json (handles missing file gracefully).
 CONFIG_ABS="$(cd "$(dirname "$CONFIG_PATH")" 2>/dev/null && pwd)/$(basename "$CONFIG_PATH")" || CONFIG_ABS="$CONFIG_PATH"
 
 resolve_table_in_config() {
-    "$PYTHON_EXE" - "$CONFIG_ABS" "$ROM" <<'EOF'
+    "${PYRUN[@]}" - "$CONFIG_ABS" "$ROM" <<'EOF'
 import json, sys
 cfg_path, rom = sys.argv[1], sys.argv[2]
 try:
@@ -135,7 +137,7 @@ EOF
 
 write_table_to_config() {
     local table_path="$1"
-    "$PYTHON_EXE" - "$CONFIG_ABS" "$ROM" "$table_path" <<'EOF'
+    "${PYRUN[@]}" - "$CONFIG_ABS" "$ROM" "$table_path" <<'EOF'
 import json, sys, os
 cfg_path, rom, tbl = sys.argv[1], sys.argv[2], sys.argv[3]
 try:

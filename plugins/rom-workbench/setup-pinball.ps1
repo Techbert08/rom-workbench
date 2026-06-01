@@ -9,13 +9,14 @@
     register a specific ROM + VPX table once the toolchain is in place.
 
     Steps:
-      1. Verify PowerShell 7+ (this file's `#requires`) and pick a Python interpreter.
+      1. Verify PowerShell 7+ (this file's `#requires`) and ensure uv is installed
+         (installing it if missing) — the Python tools run via `uv run`.
       2. Download + extract Visual Pinball X to %LOCALAPPDATA%\Programs\vpinball.
       3. Download + extract PinMAME standalone + libpinmame to %LOCALAPPDATA%\Programs\pinmame.
       4. Download + extract VPinMAME (the COM DLL) to %LOCALAPPDATA%\Programs\vpinmame
          and register it (needs an elevated PowerShell — script will detect and tell you).
 
-    Sets user-scope env vars VPINBALL_DIR, PINMAME_DIR, VPINMAME_DIR (and PYTHON_FOR_RP).
+    Sets user-scope env vars VPINBALL_DIR, PINMAME_DIR, VPINMAME_DIR.
     Re-running with no changes does nothing. Pass -Force to re-download/re-extract.
 
 .PARAMETER Force
@@ -62,45 +63,32 @@ $VpxInstallDir     = Join-Path $InstallRoot 'vpinball'
 $PinMameInstallDir = Join-Path $InstallRoot 'pinmame'
 $VpmInstallDir     = Join-Path $InstallRoot 'vpinmame'
 
-$MinPythonMajorMinor = @(3, 10)
+# --- Step 1: uv (runs every .py in this repo; provisions Python + deps) -------
 
-# --- Step 1: pick a Python interpreter ---------------------------------------
+Write-Step "Checking uv"
 
-Write-Step "Checking Python (>= $($MinPythonMajorMinor[0]).$($MinPythonMajorMinor[1]))"
-
-function Get-PythonVersionTuple([string] $exe) {
+# The Python tools are PEP 723 single-file scripts run via `uv run`, so uv
+# (not a system Python) is the only Python prerequisite — uv downloads a
+# matching interpreter and each script's declared deps into an ephemeral env.
+$uvCmd = Get-Command uv -ErrorAction SilentlyContinue
+if ($uvCmd) {
+    Write-Ok "uv $((& uv --version) -replace '^uv\s+','') at $($uvCmd.Source)"
+} else {
+    Write-Warn2 "uv not found — installing from https://astral.sh/uv ..."
     try {
-        $out = & $exe -c "import sys; print('{0}.{1}'.format(*sys.version_info[:2]))" 2>$null
-        if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
-        $parts = $out.Trim().Split('.')
-        if ($parts.Count -lt 2) { return $null }
-        return @([int]$parts[0], [int]$parts[1])
+        Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression
     } catch {
-        return $null
+        throw "Failed to install uv automatically ($_). Install it manually (https://docs.astral.sh/uv/getting-started/installation/) and re-run."
     }
-}
-
-$pythonExe = $null
-foreach ($candidate in @('python', 'py', 'python3')) {
-    $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
-    if (-not $cmd) { continue }
-    $v = Get-PythonVersionTuple $cmd.Source
-    if (-not $v) { continue }
-    if ($v[0] -gt $MinPythonMajorMinor[0] -or
-        ($v[0] -eq $MinPythonMajorMinor[0] -and $v[1] -ge $MinPythonMajorMinor[1])) {
-        $pythonExe = $cmd.Source
-        Write-Ok "Python $($v[0]).$($v[1]) at $pythonExe"
-        break
-    } else {
-        Write-Warn2 "Found $candidate $($v[0]).$($v[1]) — too old, skipping."
+    # The installer adds uv under %USERPROFILE%\.local\bin; surface it now so
+    # this run (and the verification below) can find it without a new shell.
+    $uvBin = Join-Path $env:USERPROFILE '.local\bin'
+    if (Test-Path (Join-Path $uvBin 'uv.exe')) { $env:PATH = "$uvBin;$env:PATH" }
+    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+        throw "uv installed but not on PATH. Open a new shell (or add $uvBin to PATH) and re-run."
     }
+    Write-Ok "uv installed: $((& uv --version))"
 }
-
-if (-not $pythonExe) {
-    Write-Warn2 "No suitable Python found on PATH. Install Python 3.10+ from https://www.python.org/downloads/windows/ (tick 'Add to PATH') and re-run."
-    throw "Python 3.10+ is required for the replay/* modules."
-}
-Set-RpEnvVar -Name 'PYTHON_FOR_RP' -Value $pythonExe
 
 # --- Step 2: Visual Pinball X ------------------------------------------------
 
@@ -316,7 +304,7 @@ Write-Host "Toolchain setup complete." -ForegroundColor Green
 Write-Host "  VPINBALL_DIR  = $VpxInstallDir"
 Write-Host "  PINMAME_DIR   = $PinMameInstallDir"
 Write-Host "  VPINMAME_DIR  = $VpmInstallDir"
-Write-Host "  PYTHON_FOR_RP = $pythonExe"
+Write-Host "  uv            = $((Get-Command uv -ErrorAction SilentlyContinue).Source)"
 Write-Host ""
 Write-Host "Next: register a ROM + VPX table with add-rom.ps1, e.g." -ForegroundColor Yellow
 Write-Host "  add-rom.ps1 -RomZip '.\congo_21.zip' [-Table '<path-to-vpx>']" -ForegroundColor Yellow

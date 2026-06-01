@@ -201,4 +201,4 @@ Write-Host "  Session:  $sessionPath"
 Write-Host "  Switches: $swCount"
 if ($timedOut) { Write-Warn2 "Session timed out after ${MaxSeconds}s." }
 Write-Host ""
-Write-Host "Next: python replay.py --rom $Rom --rom-zip <zip> --session $OutDir --nvram <nv> --trace state,dmd" -ForegroundColor Yellow
+Write-Host "Next: uv run replay.py --rom $Rom --rom-zip <zip> --session $OutDir --nvram <nv> --trace state,dmd" -ForegroundColor Yellow

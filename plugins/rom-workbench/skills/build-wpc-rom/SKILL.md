@@ -26,8 +26,8 @@ Applies ordered JSON patch specs to a WPC game ROM, recalculates the WPC 16-bit 
 # Validate against a recorded session (single-sided replay against the modded ROM).
 # First time the modded zip changes the WPC checksum word ($FFEE), produce a
 # freshly-reset NVRAM snapshot so the replay doesn't pay the factory-reset cost.
-python .\.claude\skills\record-pinball\init_nvram.py --rom-zip '.\dist\congo_21_modded.zip' --force
-python .\.claude\skills\record-pinball\replay.py `
+uv run .\.claude\skills\record-pinball\init_nvram.py --rom-zip '.\dist\congo_21_modded.zip' --force
+uv run .\.claude\skills\record-pinball\replay.py `
     --rom congo_21 --rom-zip '.\dist\congo_21_modded.zip' `
     --session '.\sessions\<UTC>' `
     --nvram '.\dist\congo_21_modded.nv' `
@@ -39,7 +39,7 @@ python .\.claude\skills\record-pinball\replay.py `
 - **PowerShell 7+** — `build.ps1` uses `#requires -Version 7.0`.
 - **ROM zip** in `.\orig\` (or pass `-RomZip <path>`). The build never modifies `orig/` — it reads the source zip and writes to `dist/`.
 - **Patch specs** in `.\source\patches\` (or pass `-PatchDir <path>`). May be empty; the script will still fix the checksum / disable it.
-- **`-Deploy` only**: `VPINMAME_DIR` env var set (run `record-pinball\setup.ps1` once).
+- **`-Deploy` only**: `VPINMAME_DIR` env var set (run `pinball-setup\setup-pinball.ps1` once).
 
 ## Patch spec format
 
@@ -120,9 +120,9 @@ There is no byte-sum cap (no "510 maximum"); any single 16-bit value is a valid 
    wpc-debug: the live debugger for confirming the path)
 2. Write source/patches/NNN-description.json
 3. & '.claude\skills\build-wpc-rom\build.ps1' -DisableChecksum
-4. python .\.claude\skills\record-pinball\init_nvram.py \
+4. uv run .\.claude\skills\record-pinball\init_nvram.py \
        --rom-zip .\dist\congo_21_modded.zip --force
-5. python .\.claude\skills\record-pinball\replay.py \
+5. uv run .\.claude\skills\record-pinball\replay.py \
        --rom congo_21 --rom-zip .\dist\congo_21_modded.zip \
        --session .\sessions\<UTC> --nvram .\dist\congo_21_modded.nv \
        --trace state,dmd

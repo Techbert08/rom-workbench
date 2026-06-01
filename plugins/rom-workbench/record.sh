@@ -16,7 +16,8 @@
 #   --max-sec 600
 #   --config  ./config.json (written by pinball-setup/add-rom.sh)
 #
-# Requires: VPINBALL_DIR and PINMAME_DIR set (run pinball-setup/setup-pinball.sh).
+# Requires: VPINBALL_DIR and PINMAME_DIR set, and uv on PATH
+#           (run pinball-setup/setup-pinball.sh).
 # ROM zip must be staged under $PINMAME_DIR/roms/ (run pinball-setup/add-rom.sh).
 
 set -euo pipefail
@@ -74,7 +75,7 @@ ROM_ZIP="$PINMAME_DIR/roms/$ROM.zip"
 
 if [[ -z "$TABLE" ]]; then
     [[ -f "$CONFIG" ]] || die "Config not found at $CONFIG. Run pinball-setup/add-rom.sh or pass --table."
-    TABLE=$(python3 -c "
+    TABLE=$(uv run python -c "
 import json, sys
 cfg = json.load(open('$CONFIG'))
 tables = cfg.get('tables', {})
@@ -121,7 +122,7 @@ TABLE_SHA=$(sha256 "$TABLE")
 START_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 HOST=$(hostname -s)
 
-python3 - <<PYEOF > "$SESSION_JSONL"
+uv run python - <<PYEOF > "$SESSION_JSONL"
 import json, sys
 meta = {
     "v": 1,
@@ -218,7 +219,7 @@ fi
 # Write session.meta.json
 # ---------------------------------------------------------------------------
 
-python3 - <<PYEOF > "$META_JSON"
+uv run python - <<PYEOF > "$META_JSON"
 import json
 meta = {
     "rom": "$ROM",
@@ -247,7 +248,7 @@ if (( TIMED_OUT )); then
 fi
 echo ""
 echo "Next: init NVRAM (if needed) and replay:"
-echo "  python3 $SCRIPT_DIR/replay.py \\"
+echo "  uv run $SCRIPT_DIR/replay.py \\"
 echo "      --rom $ROM --rom-zip '$ROM_ZIP' \\"
 echo "      --session '$OUT_DIR' \\"
 echo "      --nvram orig/${ROM}.nv --trace state,dmd"

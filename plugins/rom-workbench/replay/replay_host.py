@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.9"
+# dependencies = []
+# ///
 """Headless libpinmame driver.
 
 Drives libpinmame.dll via ctypes through a SetTimeFence-paced loop. Reads the
@@ -21,7 +26,7 @@ Trace modes:
               Use --break-pc, --watch-r, --watch-w.
 
 Usage:
-    python replay_host.py
+    uv run replay_host.py
         --pinmame-dir <dir-with-libpinmame.dll>
         --rom-dir     <dir-with-rom.zip>
         --rom         <rom-name>          (e.g. congo_21)

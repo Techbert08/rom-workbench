@@ -45,13 +45,13 @@ Good for "catch every hit of X over a whole boot" and watchpoint sweeps.
 
 ```powershell
 # Break before each listed PC; single-step N after each hit; dump memory windows.
-python <record-pinball>\replay.py --rom congo_21 `
+uv run <record-pinball>\replay.py --rom congo_21 `
   --rom-zip .\dist\congo_21_modded.zip --session .\sessions\<utc> `
   --nvram .\dist\congo_21_modded.nv --trace dbg `
   --break-pc 0x403F --dbg-step-after 30 --dbg-mem '@S:2,@X:16,0x0011'
 
 # Find every writer/reader of a RAM slot.
-python <record-pinball>\replay.py ... --trace dbg --watch-w '0x1670' --dbg-mem '0x0011'
+uv run <record-pinball>\replay.py ... --trace dbg --watch-w '0x1670' --dbg-mem '0x0011'
 ```
 
 `--dbg-mem` windows are read via `PinmameReadMainCPUByte` while the CPU is
@@ -69,17 +69,17 @@ probe, state survives between commands. This is the big lever for iterative work
 
 ```powershell
 # Launch in the background; wait for "[dbg] paused at <loc>".
-python <record-pinball>\replay.py --rom congo_21 `
+uv run <record-pinball>\replay.py --rom congo_21 `
   --rom-zip .\dist\congo_21_modded.zip --session .\sessions\<utc> `
   --nvram .\dist\congo_21_modded.nv --interactive --break-pc 0x4037
 # Then drive it (each call = one command; the emulator stays paused):
-python <record-pinball>\dbg.py regs
-python <record-pinball>\dbg.py dis @pc 12
-python <record-pinball>\dbg.py mem @u 24
-python <record-pinball>\dbg.py step 20
-python <record-pinball>\dbg.py continue until 0x4067
-python <record-pinball>\dbg.py wp add w 0x1670
-python <record-pinball>\dbg.py quit
+uv run <record-pinball>\dbg.py regs
+uv run <record-pinball>\dbg.py dis @pc 12
+uv run <record-pinball>\dbg.py mem @u 24
+uv run <record-pinball>\dbg.py step 20
+uv run <record-pinball>\dbg.py continue until 0x4067
+uv run <record-pinball>\dbg.py wp add w 0x1670
+uv run <record-pinball>\dbg.py quit
 ```
 
 Commands: `regs | mem <addr> [len] | dis [addr] [n] | step [n] |
@@ -93,11 +93,11 @@ wp del <addr> | bank | quit`. Address forms anywhere: `0xNNNN`, `$NNNN`,
 `loc` from any live breakpoint.
 
 ```powershell
-python <wpc-investigate>\rom.py dis  '$4037@p39' 40   # 6809 disassembly
-python <wpc-investigate>\rom.py xref '$43A6@p39'       # who calls/jumps to it
-python <wpc-investigate>\rom.py xref '$1670' --data    # +LD/ST data references
-python <wpc-investigate>\rom.py funcs --page 39        # discovered function starts
-python <wpc-investigate>\rom.py dump '$450F@p39' 15    # raw bytes (e.g. a table)
+uv run <wpc-investigate>\rom.py dis  '$4037@p39' 40   # 6809 disassembly
+uv run <wpc-investigate>\rom.py xref '$43A6@p39'       # who calls/jumps to it
+uv run <wpc-investigate>\rom.py xref '$1670' --data    # +LD/ST data references
+uv run <wpc-investigate>\rom.py funcs --page 39        # discovered function starts
+uv run <wpc-investigate>\rom.py dump '$450F@p39' 15    # raw bytes (e.g. a table)
 ```
 
 `xref`/`funcs` do bank-aware recursive-descent disassembly from prologue +

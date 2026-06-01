@@ -360,5 +360,5 @@ Write-Host ""
 $outZipStem = [System.IO.Path]::GetFileNameWithoutExtension($OutZip)
 $outNvHint  = Join-Path (Split-Path -Parent $OutZip) "$outZipStem.nv"
 Write-Host "Next steps:" -ForegroundColor Yellow
-Write-Host "  NVRAM:    python .claude\skills\record-pinball\init_nvram.py --rom-zip $OutZip --force"
-Write-Host "  Validate: python .claude\skills\record-pinball\replay.py --rom <name> --rom-zip $OutZip --session <session> --nvram $outNvHint --trace state,dmd"
+Write-Host "  NVRAM:    uv run .claude\skills\record-pinball\init_nvram.py --rom-zip $OutZip --force"
+Write-Host "  Validate: uv run .claude\skills\record-pinball\replay.py --rom <name> --rom-zip $OutZip --session <session> --nvram $outNvHint --trace state,dmd"

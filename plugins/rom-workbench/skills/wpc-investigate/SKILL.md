@@ -79,17 +79,17 @@ actually called a routine). Feed any `loc` it reports back into `rom.py dis`/
 Self-contained, stdlib-only, bank-aware. The day-to-day workhorse.
 
 ```powershell
-python ${CLAUDE_PLUGIN_ROOT}/rom.py info                       # ROM size, version byte, checksum, RESET vec
-python ${CLAUDE_PLUGIN_ROOT}/rom.py dump '$FFEC' 16            # system-ROM address
-python ${CLAUDE_PLUGIN_ROOT}/rom.py dump '$4C0E@p37' 32        # banked: page $37, addr $4C0E
-python ${CLAUDE_PLUGIN_ROOT}/rom.py dump 0x7FFEC 16            # raw file offset
-python ${CLAUDE_PLUGIN_ROOT}/rom.py search "BD 90 C4"          # byte sequence (JSR $90C4)
-python ${CLAUDE_PLUGIN_ROOT}/rom.py search '"Copyright"'       # ASCII string
-python ${CLAUDE_PLUGIN_ROOT}/rom.py strings 6 --section sys    # printable ASCII runs ≥ 6 chars
-python ${CLAUDE_PLUGIN_ROOT}/rom.py dis '$403F@p39' 40         # 6809 disassembly (n bytes)
-python ${CLAUDE_PLUGIN_ROOT}/rom.py xref '$43A6@p39'           # who calls/jumps to an address
-python ${CLAUDE_PLUGIN_ROOT}/rom.py xref '$1670' --data        # +LD/ST data references
-python ${CLAUDE_PLUGIN_ROOT}/rom.py funcs --page 39            # discovered function starts
+uv run ${CLAUDE_PLUGIN_ROOT}/rom.py info                       # ROM size, version byte, checksum, RESET vec
+uv run ${CLAUDE_PLUGIN_ROOT}/rom.py dump '$FFEC' 16            # system-ROM address
+uv run ${CLAUDE_PLUGIN_ROOT}/rom.py dump '$4C0E@p37' 32        # banked: page $37, addr $4C0E
+uv run ${CLAUDE_PLUGIN_ROOT}/rom.py dump 0x7FFEC 16            # raw file offset
+uv run ${CLAUDE_PLUGIN_ROOT}/rom.py search "BD 90 C4"          # byte sequence (JSR $90C4)
+uv run ${CLAUDE_PLUGIN_ROOT}/rom.py search '"Copyright"'       # ASCII string
+uv run ${CLAUDE_PLUGIN_ROOT}/rom.py strings 6 --section sys    # printable ASCII runs ≥ 6 chars
+uv run ${CLAUDE_PLUGIN_ROOT}/rom.py dis '$403F@p39' 40         # 6809 disassembly (n bytes)
+uv run ${CLAUDE_PLUGIN_ROOT}/rom.py xref '$43A6@p39'           # who calls/jumps to an address
+uv run ${CLAUDE_PLUGIN_ROOT}/rom.py xref '$1670' --data        # +LD/ST data references
+uv run ${CLAUDE_PLUGIN_ROOT}/rom.py funcs --page 39            # discovered function starts
 ```
 
 Without `--rom`, auto-detects `orig/*.zip`.

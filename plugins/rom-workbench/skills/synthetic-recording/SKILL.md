@@ -119,7 +119,7 @@ s.write("sessions/<out>", labels=[...], notes="...")
 Validate before replaying:
 
 ```powershell
-python ${CLAUDE_PLUGIN_ROOT}/synth.py validate sessions\<out>
+uv run ${CLAUDE_PLUGIN_ROOT}/synth.py validate sessions\<out>
 ```
 
 ## Replay & verify
@@ -127,12 +127,12 @@ python ${CLAUDE_PLUGIN_ROOT}/synth.py validate sessions\<out>
 A synthetic session is a normal session — replay it with `record-pinball`:
 
 ```powershell
-python ..\record-pinball\replay.py --rom <rom> --rom-zip <zip> `
+uv run ..\record-pinball\replay.py --rom <rom> --rom-zip <zip> `
     --session sessions\<out> --nvram <nv> --trace state,dmd,dbg `
     --watch-w 0x<addr> --out-dir sessions\<out>\replays\<stem>\run1 --overwrite
 
 # Eyeball it: render the DMD to a real-time mp4 with burned-in timecode.
-python ..\record-pinball\replay\render_dmd_video.py sessions\<out>\replays\<stem>\run1
+uv run ..\record-pinball\replay\render_dmd_video.py sessions\<out>\replays\<stem>\run1
 ```
 
 Confirm the scenario actually played: watch the RAM that proves the state you

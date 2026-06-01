@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.9"
+# dependencies = ["pillow"]
+# ///
 """Render captured DMD frames from a replay output dir to PNG.
 
 A `replay.ps1 -Trace Dmd` run writes one raw `.bin` per frame under
@@ -9,7 +14,7 @@ This helper renders selected frames (or a range) to PNG using Pillow,
 upscaling with nearest-neighbour so the dot grid stays crisp.
 
 Usage:
-    python render_dmd.py <replay-out-dir> [--frames 0,5,10-20] [--scale 4] [--out <dir>]
+    uv run render_dmd.py <replay-out-dir> [--frames 0,5,10-20] [--scale 4] [--out <dir>]
 
 If --frames is omitted, every frame is rendered.
 If --out is omitted, PNGs go to <replay-out-dir>/dmd_png/.
@@ -25,7 +30,9 @@ try:
     from PIL import Image
 except ImportError as e:
     raise SystemExit(
-        "Pillow is required for DMD rendering. Install with: python -m pip install Pillow"
+        "Pillow is required for DMD rendering. Run this script with uv "
+        "(`uv run render_dmd.py ...`), which installs the declared deps "
+        "automatically, or `pip install Pillow` for a manual environment."
     ) from e
 
 

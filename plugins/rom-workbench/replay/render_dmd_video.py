@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.9"
+# dependencies = ["pillow"]
+# ///
 """Render captured DMD frames from a replay output dir to a watchable video.
 
 A `replay.py --trace dmd` run writes one raw 8-bit-luminance `.bin` per DMD
@@ -22,7 +27,7 @@ output can't carry audio, so it's dropped there with a warning. Use --no-audio
 to skip muxing.
 
 Usage:
-    python render_dmd_video.py <replay-out-dir> [--fps 30] [--scale 6]
+    uv run render_dmd_video.py <replay-out-dir> [--fps 30] [--scale 6]
         [--out <file>] [--start 0] [--end 9999] [--no-timecode] [--no-audio]
         [--gif]
 
@@ -42,7 +47,9 @@ try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError as e:
     raise SystemExit(
-        "Pillow is required. Install with: python -m pip install Pillow"
+        "Pillow is required. Run this script with uv "
+        "(`uv run render_dmd_video.py ...`), which installs the declared deps "
+        "automatically, or `pip install Pillow` for a manual environment."
     ) from e
 
 

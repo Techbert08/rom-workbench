@@ -2,10 +2,11 @@
 # setup-pinball.sh — macOS one-time installer for the record-pinball toolchain.
 #
 # Installs:
-#   1. Checks Python 3.10+ and build prerequisites (cmake, git, clang).
+#   1. Ensures uv is installed (the Python tools run via `uv run`) and checks
+#      build prerequisites (cmake, git, clang).
 #   2. Downloads and installs Visual Pinball X (macOS build).
 #   3. Builds the patched libpinmame.dylib from source and installs it.
-#   4. Writes VPINBALL_DIR, PINMAME_DIR, PYTHON_FOR_RP to ~/.zshenv
+#   4. Writes VPINBALL_DIR, PINMAME_DIR to ~/.zshenv
 #      (and ~/.bash_profile for bash users).
 #
 # Usage:
@@ -69,33 +70,32 @@ set_shell_env() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 1: Python 3.10+
+# Step 1: uv (runs every .py in this repo; provisions Python + deps on demand)
 # ---------------------------------------------------------------------------
 
-step "Checking Python >= 3.10"
+step "Checking uv"
 
-MIN_PYTHON_MINOR=10
-PYTHON_EXE=""
-
-for candidate in python3 python; do
-    if ! command -v "$candidate" &>/dev/null; then continue; fi
-    version_str=$("$candidate" -c "import sys; print('{}.{}'.format(*sys.version_info[:2]))" 2>/dev/null || true)
-    if [[ -z "$version_str" ]]; then continue; fi
-    major="${version_str%%.*}"; minor="${version_str#*.}"
-    if (( major > 3 || (major == 3 && minor >= MIN_PYTHON_MINOR) )); then
-        PYTHON_EXE="$(command -v "$candidate")"
-        ok "Python ${version_str} at ${PYTHON_EXE}"
-        break
+# The Python tools are PEP 723 single-file scripts run via `uv run`, so uv
+# (not a system Python) is the only Python prerequisite — uv downloads a
+# matching interpreter and each script's declared deps into an ephemeral env.
+if command -v uv &>/dev/null; then
+    ok "uv $(uv --version 2>/dev/null | awk '{print $2}') at $(command -v uv)"
+else
+    warn "uv not found — installing from https://astral.sh/uv ..."
+    if command -v curl &>/dev/null; then
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+    elif command -v wget &>/dev/null; then
+        wget -qO- https://astral.sh/uv/install.sh | sh
     else
-        warn "Found ${candidate} ${version_str} — too old, skipping."
+        die "Neither curl nor wget is available to install uv. Install it manually (https://docs.astral.sh/uv/getting-started/installation/) and re-run."
     fi
-done
-
-if [[ -z "$PYTHON_EXE" ]]; then
-    die "Python 3.${MIN_PYTHON_MINOR}+ not found. Install from https://www.python.org/downloads/ or via Homebrew: brew install python3"
+    # The installer drops uv under ~/.local/bin by default; surface it now so
+    # the rest of this run (and the verification below) can find it.
+    export PATH="$HOME/.local/bin:$PATH"
+    command -v uv &>/dev/null \
+        || die "uv installed but is not on PATH. Open a new shell (or add ~/.local/bin to PATH) and re-run."
+    ok "uv installed: $(uv --version)"
 fi
-
-set_shell_env PYTHON_FOR_RP "$PYTHON_EXE"
 
 # ---------------------------------------------------------------------------
 # Step 2: Build prerequisites
@@ -430,7 +430,7 @@ fi
 echo ""
 echo -e "${GREEN}Toolchain setup complete.${NC}"
 echo "  PINMAME_DIR   = ${PINMAME_INSTALL_DIR}"
-echo "  PYTHON_FOR_RP = ${PYTHON_EXE}"
+echo "  uv            = $(command -v uv)"
 [[ -n "${VPX_INSTALL_DIR:-}" ]] && echo "  VPINBALL_DIR  = ${VPX_INSTALL_DIR}"
 echo ""
 echo "Env vars written to ~/.zshenv and ~/.bash_profile."

@@ -25,7 +25,7 @@ For everyday "analyze a ROM" / "replay a session" / "set a breakpoint" requests,
 | Visual Pinball X 10.8.0 | `%LOCALAPPDATA%\Programs\vpinball` | `VPINBALL_DIR` |
 | PinMAME standalone + libpinmame | `%LOCALAPPDATA%\Programs\pinmame` | `PINMAME_DIR` |
 | VPinMAME COM (regsvr32-registered) | `%LOCALAPPDATA%\Programs\vpinmame` | `VPINMAME_DIR` |
-| Picked Python interpreter | (already on PATH) | `PYTHON_FOR_RP` |
+| uv (installed if missing) | `%USERPROFILE%\.local\bin` | — |
 | Patched VPinMAME64.dll | deployed over the installed VPinMAME | — |
 | Patched libpinmame (debugger API) | deployed over the installed PinMAME | — |
 
@@ -35,7 +35,7 @@ For everyday "analyze a ROM" / "replay a session" / "set a breakpoint" requests,
 |---|---|---|
 | Visual Pinball X (macOS GL build) | `~/Library/Application Support/VPinball` | `VPINBALL_DIR` |
 | Patched libpinmame.dylib | `~/Library/Application Support/PinMAME` | `PINMAME_DIR` |
-| Picked Python interpreter | (already on PATH) | `PYTHON_FOR_RP` |
+| uv (installed if missing) | `~/.local/bin` | — |
 
 `libpinmame.dylib` is **built from source** by `setup-pinball.sh` (no macOS
 prebuilt is distributed by upstream PinMAME). The patched source lives in
@@ -51,11 +51,11 @@ bash '${CLAUDE_PLUGIN_ROOT}/setup-pinball.sh' [--force] [--pinmame-src <path>]
 ```
 
 Idempotent. Steps:
-1. Verify Python 3.10+ and build prerequisites (cmake, git, clang).
+1. Ensure `uv` is installed (install via https://astral.sh/uv if missing) and verify build prerequisites (cmake, git, clang). The Python tools run via `uv run`, so uv — not a system Python — is the only Python prerequisite.
 2. Download Visual Pinball X macOS build (skips gracefully if no macOS asset exists for the pinned release).
 3. Build patched `libpinmame.dylib` from `--pinmame-src` (default: `../pinmame` relative to the project root). Applies the three patches in `record-pinball/pinmame-patches/` if the branch doesn't exist yet.
 4. Install `libpinmame.dylib` to `PINMAME_DIR` and (if found) into the VPX app bundle.
-5. Write `PINMAME_DIR`, `VPINBALL_DIR`, `PYTHON_FOR_RP` to `~/.zshenv` and `~/.bash_profile`.
+5. Write `PINMAME_DIR`, `VPINBALL_DIR` to `~/.zshenv` and `~/.bash_profile`.
 
 ### `add-rom.sh` — macOS: register a game
 
@@ -64,7 +64,7 @@ bash '${CLAUDE_PLUGIN_ROOT}/add-rom.sh' \
     --rom-zip '<path-to-rom-zip>' \   # required
     [--rom <name>] \                  # default: basename of the zip
     [--table '<path-to-vpx>'] \       # optional
-    [--skip-table] \                  # replay.py works fine without a table
+    [--skip-table] \                  # stage ROM only; recording needs a table later
     [--force]
 ```
 
@@ -81,7 +81,7 @@ Copies the ROM zip to `$PINMAME_DIR/roms/<rom>.zip` and records the VPX table pa
 **Needs an Administrator PowerShell once** for `regsvr32`. If not elevated, the script detects this and prints the exact relaunch command rather than failing silently.
 
 Idempotent. Steps:
-1. Verify PowerShell 7+ and pick a Python interpreter; record as `PYTHON_FOR_RP`.
+1. Verify PowerShell 7+ and ensure `uv` is installed (install via https://astral.sh/uv if missing). The Python tools run via `uv run`, so uv — not a system Python — is the only Python prerequisite.
 2. Download Visual Pinball X 10.8.0.
 3. Download PinMAME 3.6 standalone + libpinmame.
 4. Download VPinMAME 3.6 COM, `regsvr32` it.
@@ -171,11 +171,11 @@ Forgetting the deploy step makes `replay.py` fall back to the un-patched DLL. Th
 
 ### Windows
 - **PowerShell 7+** (`pwsh`).
-- **Python 3.10+** on PATH.
+- **uv** — installed automatically by `setup-pinball.ps1` if missing; runs every Python tool (no system Python needed).
 - **One Administrator PowerShell** for `regsvr32 VPinMAME.dll`.
 
 ### macOS
-- **Python 3.10+** on PATH (or via Homebrew: `brew install python3`).
+- **uv** — installed automatically by `setup-pinball.sh` if missing; runs every Python tool (no system Python needed).
 - **cmake 3.25+** (`brew install cmake`).
 - **Xcode Command Line Tools** (`xcode-select --install`).
 - **git** (bundled with Xcode CLT).
