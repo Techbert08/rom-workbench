@@ -24,7 +24,6 @@ the always-mapped system region; `$4000-$7FFF` is a 16 KB window into one of
 - "who calls / references $XXXX?" / "disassemble $XXXX@pYY"
 - "set a breakpoint at $D9A6 and step it" / "hold the CPU and let me poke around"
 - "this banked PC is ambiguous — which page is it?"
-- "is Ghidra lying about this function?" (yes, for banked code — see below)
 
 ## The #1 thing: resolving banked code
 
@@ -88,7 +87,7 @@ continue [until <pc>] | bp add|del <pc> | bp list | wp add r|w <addr> |
 wp del <addr> | bank | quit`. Address forms anywhere: `0xNNNN`, `$NNNN`,
 `NNNN`(hex), or register-relative `@X @S+2 @U-1` (resolved from the frozen regs).
 
-## Static analysis (no emulator, no Ghidra)
+## Static analysis (no emulator)
 
 `rom.py` reads ROM bytes directly — fast, faithful, bank-aware. Feed it the
 `loc` from any live breakpoint.
@@ -158,9 +157,7 @@ Recipe (worked example — the routine that loads Congo's version digits):
 - **Stack slots are transient.** A value the engine reads via `(U+offset)` lives
   on its frame; watchpointing that address is mostly stack noise. Trace the
   value to its *register* origin, not the stack slot.
-- **Don't trust Ghidra on banked code.** Its auto-analysis doesn't model WPC
-  banking, so `$4000-$7FFF` overlays decode as garbage (e.g. a format engine
-  rendered as solenoid handling). Use `rom.py dis` + the live debugger instead.
+- **Banked code requires `rom.py dis` + the live debugger.** WPC bank-switching means `$4000-$7FFF` overlays are page-specific; static tools that don't model this decode garbage. Always supply `@pPAGE` and confirm against the live debugger.
 
 ## Why a custom debugger / why Python
 

@@ -11,7 +11,7 @@ A Claude Code plugin for reverse-engineering and modding Williams Pinball Contro
 | `build-wpc-rom` | Apply JSON patch specs to a WPC ROM zip, recompute the WPC checksum, produce a drop-in patched zip |
 | `record-pinball` | Capture gameplay sessions in Visual Pinball + VPinMAME; replay headlessly with state/DMD/audio/debugger traces; event-driven CPU debugger with breakpoints and watchpoints |
 | `synthetic-recording` | Author a replayable WPC session by hand — emit the switch-edge stream to drive the ROM into a chosen state without Visual Pinball |
-| `pinball-setup` | One-time toolchain installer: Ghidra + WPC loader, Visual Pinball X, PinMAME, VPinMAME, patched libpinmame with the debug API |
+| `pinball-setup` | One-time toolchain installer: Visual Pinball X, PinMAME, VPinMAME, patched libpinmame with the debug API |
 
 ## Install
 

@@ -27,8 +27,8 @@ infrastructure (sessions + NVRAM snapshots) is the substrate it runs on.
 - "set a breakpoint on $D9A6 and tell me what A is" (Dbg trace; see also `wpc-investigate`)
 
 For first-time machine setup or per-game ROM/table registration, use the
-**`pinball-setup`** skill instead. For static analysis (Ghidra) and the
-investigation workflow that *uses* the `Dbg` trace, use **`wpc-investigate`**.
+**`pinball-setup`** skill instead. For static analysis and the investigation workflow that *uses* the `Dbg` trace,
+use **`wpc-investigate`**.
 
 ## Quickstart
 
@@ -417,7 +417,7 @@ for the relevant label first.
 For a typical mod-validation workflow:
 
 1. **Identify the moment of interest.** Decide what gameplay event the mod targets (e.g. "left ramp 10 times in a row triggers extra ball"). Record a session in VpRecord mode (the default) that reaches and exercises this event.
-2. **Pin down the code path on the factory ROM.** Once per ROM zip: `init_nvram.py --rom-zip .\orig\<rom>.zip` to make `<rom>.nv`. Then `replay.py --rom <rom> --rom-zip .\orig\<rom>.zip --session ... --nvram .\orig\<rom>.nv --trace state,dmd` and inspect `trace.state.jsonl` for the lamps/solenoids that fire during the event. From the existing `analysis/` decompile (produced by `wpc-investigate\analyze.ps1`), search for memory references that write those lamps/solenoids — those are your candidate functions.
+2. **Pin down the code path on the factory ROM.** Once per ROM zip: `init_nvram.py --rom-zip .\orig\<rom>.zip` to make `<rom>.nv`. Then `replay.py --rom <rom> --rom-zip .\orig\<rom>.zip --session ... --nvram .\orig\<rom>.nv --trace state,dmd` and inspect `trace.state.jsonl` for the lamps/solenoids that fire during the event. Use `wpc-investigate\rom.py xref` to find memory references that write those lamp/solenoid addresses — those are your candidate functions.
 3. **Pin the exact code with the debugger.** Re-run with `--trace state,dbg --watch-w '<addrs>'` to find every PC that writes the candidate addresses, or `--break-pc '<entry-pc>' --dbg-step-after 50` to walk a routine's prologue. Each hit captures a full register snapshot at the exact instruction; no polling, no missed events.
 4. **Make the mod.** Patch the ROM byte(s) (via `build-wpc-rom`) to produce `dist\<rom>_modded.zip` whose internal layout matches the factory zip.
 5. **Validate.** `init_nvram.py --rom-zip .\dist\<rom>_modded.zip --force` for the modded NVRAM, then re-run `replay.py` against the modded ROM+NVRAM with the same `--session`. Inspect the modded trace directly for the intended effect (e.g. expected DMD content at expected frames). If the patch should have *no* effect on a particular code path, `diff_traces.py` can confirm — bearing in mind the caveats in "Two-run comparison" above.

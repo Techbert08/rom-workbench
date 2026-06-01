@@ -1,6 +1,6 @@
 ---
 name: pinball-setup
-description: One-time installer for the WPC mod toolchain — Ghidra + WPC loader (for wpc-investigate), Visual Pinball X + PinMAME + VPinMAME + the patched libpinmame (for record-pinball), and per-game ROM/table registration via add-rom. Use only on first machine setup or when reinstalling a single component. Not needed for day-to-day mod work.
+description: One-time installer for the WPC mod toolchain — Visual Pinball X + PinMAME + VPinMAME + the patched libpinmame (for record-pinball), and per-game ROM/table registration via add-rom. Use only on first machine setup or when reinstalling a single component. Not needed for day-to-day mod work.
 ---
 
 # pinball-setup
@@ -10,7 +10,6 @@ One-time install. Once setup runs successfully, day-to-day work doesn't need thi
 ## When to invoke
 
 - "set up the pinball toolchain" / "install the WPC mod tools"
-- "install Ghidra for WPC analysis"
 - "install Visual Pinball / PinMAME / VPinMAME"
 - "register Congo as a ROM" / "add a new game to the recorder"
 - "redeploy the patched libpinmame after a rebuild"
@@ -23,7 +22,6 @@ For everyday "analyze a ROM" / "replay a session" / "set a breakpoint" requests,
 
 | Component | Where | Env var |
 |---|---|---|
-| Ghidra 12.0.4 + c0rner WPC loader | `%LOCALAPPDATA%\Programs\ghidra_12.0.4_PUBLIC` | `GHIDRA_INSTALL_DIR` |
 | Visual Pinball X 10.8.0 | `%LOCALAPPDATA%\Programs\vpinball` | `VPINBALL_DIR` |
 | PinMAME standalone + libpinmame | `%LOCALAPPDATA%\Programs\pinmame` | `PINMAME_DIR` |
 | VPinMAME COM (regsvr32-registered) | `%LOCALAPPDATA%\Programs\vpinmame` | `VPINMAME_DIR` |
@@ -59,8 +57,6 @@ Idempotent. Steps:
 4. Install `libpinmame.dylib` to `PINMAME_DIR` and (if found) into the VPX app bundle.
 5. Write `PINMAME_DIR`, `VPINBALL_DIR`, `PYTHON_FOR_RP` to `~/.zshenv` and `~/.bash_profile`.
 
-Does **not** install Ghidra. Run `setup-ghidra.ps1` separately on macOS via `pwsh` if you need it.
-
 ### `add-rom.sh` — macOS: register a game
 
 ```bash
@@ -75,22 +71,6 @@ bash '${CLAUDE_PLUGIN_ROOT}/add-rom.sh' \
 Copies the ROM zip to `$PINMAME_DIR/roms/<rom>.zip` and records the VPX table path in `./config.json`.
 
 ---
-
-### `setup-ghidra.ps1` — static analysis tools
-
-```powershell
-& '${CLAUDE_PLUGIN_ROOT}/setup-ghidra.ps1' [-Force]
-```
-
-Idempotent. Steps:
-1. Verify Java 21+ and git are on PATH.
-2. Download Ghidra 12.0.4 (~400 MB), SHA-256 verify, extract.
-3. Set `GHIDRA_INSTALL_DIR` (user scope).
-4. Clone or update `https://github.com/c0rner/ghidra_wpc_loader`.
-5. Build the extension via Ghidra's bundled gradle wrapper (first build downloads gradle 9.3.1).
-6. Drop the built extension into `<ghidra>\Ghidra\Extensions\ghidra_wpc_loader\` so `analyzeHeadless` auto-loads it.
-
-If any step fails partway, `-Force` and re-run gives you a clean install.
 
 ### `setup-pinball.ps1` — dynamic-analysis / replay tools
 
@@ -192,8 +172,6 @@ Forgetting the deploy step makes `replay.py` fall back to the un-patched DLL. Th
 ### Windows
 - **PowerShell 7+** (`pwsh`).
 - **Python 3.10+** on PATH.
-- **JDK 21+** on PATH (Eclipse Temurin recommended, for Ghidra only).
-- **git** on PATH (for cloning the WPC loader, for Ghidra only).
 - **One Administrator PowerShell** for `regsvr32 VPinMAME.dll`.
 
 ### macOS
@@ -209,7 +187,6 @@ Each script verifies its own dependencies and exits with a clear message if anyt
 ```
 ${CLAUDE_PLUGIN_ROOT}/
 ├── SKILL.md                # this file
-├── setup-ghidra.ps1        # Ghidra + WPC loader installer (for wpc-investigate; Windows)
 ├── setup-pinball.ps1       # VP + PinMAME + VPinMAME installer (for record-pinball; Windows)
 ├── setup-pinball.sh        # libpinmame.dylib + VPX installer (for record-pinball; macOS)
 ├── add-rom.ps1             # per-game ROM + table registration (Windows)

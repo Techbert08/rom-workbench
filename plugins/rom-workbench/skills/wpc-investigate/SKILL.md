@@ -1,13 +1,13 @@
 ---
 name: wpc-investigate
-description: Static and byte-level investigation of Williams Pinball Controller (WPC) ROMs with the self-contained, bank-aware rom.py tool — 6809 disassembly (dis), recursive-descent cross-reference and function discovery (xref/funcs), hex dump, byte/string search, and address↔file-offset. Use to disassemble a WPC ROM region, find who calls/references an address, locate functions, or verify patch bytes. For driving the live CPU debugger alongside this, see the wpc-debug skill; Ghidra remains available as an optional heavy fallback but is NOT the primary path.
+description: Static and byte-level investigation of Williams Pinball Controller (WPC) ROMs with the self-contained, bank-aware rom.py tool — 6809 disassembly (dis), recursive-descent cross-reference and function discovery (xref/funcs), hex dump, byte/string search, and address↔file-offset. Use to disassemble a WPC ROM region, find who calls/references an address, locate functions, or verify patch bytes. For driving the live CPU debugger alongside this, see the wpc-debug skill.
 ---
 
 # wpc-investigate
 
 Static + byte-level reverse-engineering tools for Williams Pinball Controller
 (1990s Williams/Bally) ROMs. The primary tool is **`rom.py`** — self-contained,
-stdlib-only, and **bank-aware**. It does the day-to-day work without Ghidra:
+stdlib-only, and **bank-aware**. It is the day-to-day workhorse:
 
 - **`dis`** — from-scratch 6809 disassembly (decodes one instruction at a time,
   so banked code stays in its page).
@@ -19,13 +19,6 @@ This pairs with the **live CPU debugger** (in `record-pinball`, driven via the
 `wpc-debug` playbook): use the debugger to establish ground truth (which page a
 PC is in, runtime register/RAM values, the call chain), then feed that `loc`
 straight into `rom.py dis`/`xref`.
-
-> **Ghidra is a deprecated fallback, not the primary path.** Its auto-analysis
-> doesn't model WPC bank-switching, so banked `$4000-$7FFF` overlays decode as
-> garbage (a format engine showed up as solenoid handling). `rom.py dis` + the
-> live debugger are faithful and lighter. The Ghidra pipeline (`analyze.ps1`,
-> `ghidra_scripts/`) is kept only for the rare whole-image one-off; the
-> `decompiled.c` artifact is no longer checked in. See "Mode 3" below.
 
 ## When to invoke
 
@@ -51,103 +44,20 @@ debugger — see the **`wpc-debug`** skill (and `record-pinball` for the host).
    └───────────────────────────────────┘         └──────────────────────────────┘
                     ▲                                          │
                     └────────── feed live `loc` into ──────────┘
-        (Ghidra: optional heavy fallback for whole-image xref — see Mode 3)
 ```
 
-`rom.py xref`/`funcs` answer the static "who/where" questions Ghidra used to;
-the live debugger answers the dynamic "what actually happened / which page"
-questions static analysis can't. Use them together; reach for Ghidra rarely.
+`rom.py xref`/`funcs` answer the static "who/where" questions; the live
+debugger answers the dynamic "what actually happened / which page" questions
+static analysis can't. Use them together.
 
 ## Setup
 
 Setup is a one-time install handled by the `pinball-setup` skill. It deploys:
 
-- Ghidra 12.0.4 + the c0rner/ghidra_wpc_loader extension → `%LOCALAPPDATA%\Programs\ghidra_*`. Sets `GHIDRA_INSTALL_DIR`.
 - Visual Pinball X, PinMAME standalone, our patched libpinmame (with the Debug API). Sets `PINMAME_DIR`.
 - VPinMAME COM (`regsvr32`, needs Admin once).
 
-If anything is missing, the relevant entry-point script (`analyze.ps1`, `replay.py`) prints a clear "run pinball-setup first" message.
-
----
-
-## Mode 3: Static analysis (Ghidra) — optional heavy fallback
-
-> **Deprecated for day-to-day work.** Reach for this only when you need a
-> whole-image decompile to read unfamiliar logic and `rom.py dis`/`xref` aren't
-> enough — and never trust its banked-code output without confirming against
-> `rom.py dis` or the live debugger. The `decompiled.c` artifact is **no longer
-> checked in** (regenerate locally if you want it). The custom `ghidra_scripts/`
-> (bank xrefs, prologue/thunk scans) are kept for that rare one-off.
-
-### Run the pipeline
-
-```powershell
-# Project-root CWD. Drops outputs in .\analysis\ next to wherever you run it.
-& '${CLAUDE_PLUGIN_ROOT}/analyze.ps1' `
-    -RomZip '.\orig\<rom>.zip' `
-    -ProjectDir '.\analysis' `
-    -ProjectName '<rom>' `
-    [-Overwrite] `
-    [-NoDecompile]
-```
-
-Main artifact: `analysis\<rom>.decompiled.c` — every clean-decompiling function with a `// --- FUN_… @ <addr> ---` header. Functions whose body contains `Bad instruction` / `halt_baddata` are filtered out (probing data bytes as code).
-
-For interactive use, open `analysis\<rom>.gpr` in `<ghidra>\ghidraRun.bat`.
-
-### Pipeline (five post-scripts, in order)
-
-All in `${CLAUDE_PLUGIN_ROOT}/ghidra_scripts`:
-
-1. **`WpcBankXrefs.java`** — Harvest every default-space reference into `$4000–$7FFF`. Code refs → candidate entry points; data refs → pointer-chase 16-bit values for indirect function pointers. Probes each candidate in every `ROM_PAGE_XX` overlay. Iterates to fixpoint.
-2. **`WpcPrologueScan.java`** — In code-dense overlays, scan unrecognised bytes for `PSHS <reglist>` (`0x34 + nonzero, non-0xFF reglist`). Each match → disassemble + createFunction.
-3. **`WpcThunkResolve.java`** — Recover `(bank, target)` pairs from `$90C4` bank-switch thunks. Convention: `LDB #<bank> ; JSR $90C4 ; … JSR $4xxx`. Low yield on Congo (1 new function / 61 callers) — most thunk calls aren't followed by a banked JSR.
-4. **`WpcDisplayScripts.java`** — Force-disassemble inline-parameter display scripts passed to `$D9A6`. The dispatcher reads a 16-bit pointer immediately after its `JSR` and adjusts the return PC past additional argument bytes, so script bodies look like data to Ghidra. Falls back to `target+1` if the first byte is in the standard-6809 illegal-opcode set (e.g. Congo's `0x05` script-type tag at `$C0CA`).
-5. **`DecompileAllScript.java`** — Calls `analyzeChanges(currentProgram)` first to flush the analyzer over new functions (critical — without it ~700 fewer functions decompile cleanly). Then decompiles every function with 60s timeout, filters bad-instruction bodies, writes to output.
-
-### Diagnostic scripts (run manually)
-
-Not wired into the default pipeline; invoke against an existing project:
-
-```powershell
-# Per-block code/data/undef byte breakdown
-& "$env:GHIDRA_INSTALL_DIR\support\analyzeHeadless.bat" `
-    '.\analysis' '<rom>' -process '<rom-filename>' -noanalysis `
-    -scriptPath '${CLAUDE_PLUGIN_ROOT}/ghidra_scripts' `
-    -postScript WpcCoverageReport.java
-
-# Dump inbound xrefs + surrounding context for every STA/STB $3FFC site.
-# Useful when porting to a new game with different bank-switch conventions.
-… -postScript WpcThunkCallers.java
-
-# Scan every initialised byte for instructions whose 8/16-bit immediate
-# operand matches one of TARGETS_8/TARGETS_16. Cheap way to find "what
-# loads register A with 0x02?"
-… -postScript WpcImmediateScan.java
-
-# Dump all xrefs to a list of addresses across all spaces (default +
-# every ROM_PAGE_XX overlay). Dedups by FROM address since RAM is
-# mirrored into every overlay. Targets configured in the .java.
-… -postScript WpcXrefDump.java
-```
-
-### Empirical results (Congo, 512 KiB)
-
-| Pass | Coverage | Clean decompiles |
-|---|---|---|
-| Loader only (system ROM auto-analysis) | 61% sys-ROM, ~3% banked | 13 |
-| + WpcBankXrefs | 12% total | 388 |
-| + WpcPrologueScan | 22.6% total | 1,456 |
-| + analyzeChanges() flush | 22.6% (same bytes) | **2,175** |
-
-`analyzeChanges()` doesn't disassemble more bytes — it lets the analyzer wire up cross-references on existing functions, which unblocks the decompiler.
-
-### Limitations
-
-- **Banked coverage caps around 22% / ~2,000 functions on Congo** because most cross-bank calls go through RAM-springboard / stack-passed thunks (`BANK_SPRINGBOARD @ $0012`) whose `(bank, target)` is set up dynamically. Static pattern matching can't resolve these without real data-flow analysis.
-- **`WpcPrologueScan` produces spurious functions** when `0x34 <reglist>` data bytes happen to disassemble. `DecompileAllScript`'s filter drops obvious ones but some "clean" functions are still false positives.
-- **Inline-parameter dispatcher disassembly is fragile.** `WpcDisplayScripts.java` covers `$D9A6` but each WPC OS utility uses its own protocol — `$D827`, etc. would need their own pass.
-- **Decompile output is approximate** for banked code, self-modifying code, and inline-parameter protocols. Always cross-check with the debugger.
+If anything is missing, `replay.py` prints a clear "run pinball-setup first" message.
 
 ---
 
@@ -187,11 +97,10 @@ Without `--rom`, auto-detects `orig/*.zip`.
 ### `dis` — from-scratch 6809 disassembler
 
 `rom.py dis '$ADDR@pPAGE' [nbytes]` decodes the WPC CPU (68B09E) instruction
-stream **without Ghidra**. It decodes one instruction at a time so banked code
-stays in its page (logical `$4000-$7FFF` addresses don't bleed across pages),
-resolves branch/JSR targets, and annotates them with the page. This is the
-go-to when Ghidra's auto-analysis mis-decodes a banked overlay (common on WPC),
-or when you want a quick, paste-the-`loc`-from-a-breakpoint listing.
+stream. It decodes one instruction at a time so banked code stays in its page
+(logical `$4000-$7FFF` addresses don't bleed across pages), resolves branch/JSR
+targets, and annotates them with the page. This is the go-to for a quick,
+paste-the-`loc`-from-a-breakpoint listing.
 
 - Feed it the `loc` from a `dbg`/interactive-session `regs` and you get
   ground-truth, correctly-paged instructions.
@@ -214,7 +123,7 @@ instructions rather than grepping bytes:
   mapped while it runs). `$8000+` targets are global (any page can reference).
 - `funcs` reports only **validated call targets** (high precision); raw prologue
   bytes that land in data are used as seeds but not reported as functions.
-- This replaces Ghidra's bank-xref / prologue-scan scripts for everyday use.
+- Bank-aware recursive-descent from seeds, scoped correctly to each page.
 
 **Limits:** (1) cross-page calls route through the WPC OS bank dispatcher (system
 code jumping to `$4xxx` with the page chosen at runtime) and can't be statically
@@ -270,23 +179,10 @@ skill for the live-debugger mechanics):
 ```
 ${CLAUDE_PLUGIN_ROOT}/
 ├── SKILL.md                       # this file
-├── rom.py                         # PRIMARY: bank-aware static tool (dis/xref/funcs/dump/search/strings)
-├── analyze.ps1                    # Ghidra headless driver (optional heavy fallback)
-└── ghidra_scripts/                # passed to Ghidra via -scriptPath (fallback only)
-    ├── WpcBankXrefs.java          # pipeline step 1
-    ├── WpcPrologueScan.java       # pipeline step 2
-    ├── WpcThunkResolve.java       # pipeline step 3
-    ├── WpcDisplayScripts.java     # pipeline step 4
-    ├── DecompileAllScript.java    # pipeline step 5
-    ├── WpcCoverageReport.java     # diagnostic
-    ├── WpcThunkCallers.java       # diagnostic
-    ├── WpcImmediateScan.java      # diagnostic: instructions with given imm operand
-    └── WpcXrefDump.java           # diagnostic: xrefs to a list of addresses
+└── rom.py                         # bank-aware static tool (dis/xref/funcs/dump/search/strings)
 ```
 
 ## References
 
-- Ghidra (pinned to 12.0.4): https://github.com/NationalSecurityAgency/ghidra
-- WPC loader: https://github.com/c0rner/ghidra_wpc_loader
 - Our patched libpinmame (debugger API): the `switch-recorder` branch off `github.com/vpinball/pinmame` (`src/libpinmame/libpinmame.{h,cpp}`); prebuilt DLLs ship in `record-pinball/bin/`
 - The `Dbg` trace driver and worker thread: `../record-pinball/replay/replay_host.py`

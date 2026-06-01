@@ -320,8 +320,8 @@ def cmd_dis(rom, spec, length: int = 64):
 
 # ── Code map: recursive-descent disassembly (xref / funcs) ────────────────────
 #
-# Bank-aware static analysis to replace Ghidra for the day-to-day "who calls /
-# references this address" and "where do functions start" questions. We descend
+# Bank-aware static analysis for the day-to-day "who calls / references this
+# address" and "where do functions start" questions. We descend
 # from seeds (function prologues + CPU vectors), following intra-region control
 # flow, and record every control/data edge. Banked $4000-$7FFF targets stay in
 # the source's page (that's the only page mapped while it runs); $8000+ targets
