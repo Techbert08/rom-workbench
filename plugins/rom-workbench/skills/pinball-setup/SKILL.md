@@ -96,7 +96,7 @@ Downloads are SHA-256 verified against a sidecar file recorded on first download
     -RomZip '<path-to-rom-zip>' `    # required
     [-Rom <name>] `                  # default: basename of the zip
     [-Table '<path-to-vpx>'] `       # optional; otherwise prompted
-    [-SkipTable] `                   # use record-pinball's InpOnly mode only
+    [-SkipTable] `                   # stage the ROM only; register a table later to record
     [-Force]                         # overwrite staged zip / registered table
 ```
 

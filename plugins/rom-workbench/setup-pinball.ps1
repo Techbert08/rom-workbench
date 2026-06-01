@@ -233,8 +233,8 @@ else {
 }
 Set-RpEnvVar -Name 'VPINMAME_DIR' -Value $VpmInstallDir
 
-# --- Step 5: Deploy patched VPinMAME64.dll (adds VPINMAME_SWITCHLOG switch-edge -----
-#             recorder + legacy VPINMAME_RECORD .inp env-var support) -----
+# --- Step 5: Deploy patched VPinMAME64.dll (adds the VPINMAME_SWITCHLOG -----
+#             switch-edge recorder used by record.ps1) -----
 
 Write-Step "Deploying patched VPinMAME64.dll"
 $patchedDll = Join-Path $PSScriptRoot 'bin\VPinMAME64.dll'

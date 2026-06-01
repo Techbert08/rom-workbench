@@ -88,24 +88,19 @@ If a script complains "PINMAME_DIR not set" or similar, point at
 & '${CLAUDE_PLUGIN_ROOT}/record.ps1' `
     [-Rom congo_21] `                      # default: congo_21
     [-Table '<path-to-vpx>'] `             # default: from config.json
-    [-Mode VpRecord|InpOnly|VpVpm] `       # default: VpRecord
     [-OutDir '<dir>'] `                    # default: .\sessions\<UTC>
-    [-PollHz 1000] `                       # switch-matrix sample rate (VpVpm only)
     [-MaxSeconds 600]                      # safety stop
 ```
 
 Sessions are written to `.\sessions\<UTC>\` relative to the current working directory.
+`record.ps1` is the Windows recorder; `record.sh` is its macOS counterpart, and both
+produce an identical `session.jsonl`.
 
-**VpRecord mode (default — confirmed working; switch-log capture proven 2026-05-30).** Launches Visual Pinball with the full table. The patched `VPinMAME64.dll` (deployed by `setup.ps1` Step 5 from `bin\VPinMAME64.dll`) runs inside VP's process and captures **two** streams via env vars set in the child:
+Launches Visual Pinball with the full table. The patched `VPinMAME64.dll` (deployed by `setup-pinball.ps1` Step 5 from `bin\VPinMAME64.dll`) runs inside VP's process and captures the replayable switch stream via one env var set in the child:
 
-- `VPINMAME_SWITCHLOG=<session>\switchlog.jsonl` — **the replayable stream.** VP drives the playfield through the COM `Controller.Switch`/`put_Switches` path, which funnels through `vp_putSwitch`; the patched DLL logs every externally-driven switch *edge* there as a JSONL `"switch"` record stamped with the **emulation clock** (`timer_get_time`). When VP closes, `record.ps1` folds these into `session.jsonl` as `kind:"switch"` records (after the meta line). This is what `replay.py`/`replay_host.py` inject via `PinmameSetSwitch` — the same `swMatrix` plane VP drove, so gameplay reproduces faithfully.
-- `VPINMAME_RECORD=<stem>` — a MAME-native `.inp` to `%VPINMAME_DIR%\inp\<stem>.inp`, copied to `session.inp` on close. **Legacy / nonfunctional for VP-driven sessions:** the `.inp` only records MAME's *input-port* plane, but VP drives switches over COM (the swMatrix plane), which never touches the input ports — so the `.inp` comes back effectively empty of gameplay and **cannot** drive a replay. Kept for now only as a forensic artifact and for the rare native-PinMAME capture (InpOnly). Replay it with `--playback-inp` only for InpOnly sessions.
+- `VPINMAME_SWITCHLOG=<session>\switchlog.jsonl` — VP drives the playfield through the COM `Controller.Switch`/`put_Switches` path, which funnels through `vp_putSwitch`; the patched DLL logs every externally-driven switch *edge* there as a JSONL `"switch"` record stamped with the **emulation clock** (`timer_get_time`). When VP closes, `record.ps1` folds these into `session.jsonl` as `kind:"switch"` records (after the meta line). This is what `replay.py`/`replay_host.py` inject via `PinmameSetSwitch` — the same `swMatrix` plane VP drove, so gameplay reproduces faithfully.
 
-**InpOnly mode (fallback).** Skips Visual Pinball. Spawns `pinmame.exe -record session.inp <rom>` and lets you play directly in the PinMAME window (DMD only, no table physics). Produces the same MAME-native `.inp` and `sessions/<utc>/` wrapper; use this if VP itself is misbehaving or for quick headless checks.
-
-**VpVpm mode (broken — do not use).** Kept for reference. Attempts to attach to VP's VPinMAME COM object from an external process, which fails because VPinMAME is registered as `InprocServer32`. Superseded by VpRecord.
-
-**Stop recording** by closing the VP/PinMAME window or hitting Ctrl-C in the recording terminal. `-MaxSeconds` is a safety cap.
+**Stop recording** by closing the VP window or hitting Ctrl-C in the recording terminal. `-MaxSeconds` is a safety cap.
 
 ## NVRAM init: `init_nvram.py`
 
@@ -141,16 +136,12 @@ python ${CLAUDE_PLUGIN_ROOT}/replay.py `
     [--sim-step 0.001] `                      # simulated seconds per loop step
     [--max-sec <seconds>] `                   # default 600
     [--tail-sec 1.0] `                        # keep emulating N s past the last switch event
-    [--playback-inp] `                        # native .inp playback (InpOnly sessions only)
     [--overwrite]
 ```
 
 `--tail-sec` (default 1.0) keeps the emulator running a beat past the final
 switch event so the game settles and the DMD finishes its transition — without
-it, a replay can cut off mid-animation right after the last input. `--playback-inp`
-replays `session.inp` through PinMAME's native `VPINMAME_PLAYBACK` path instead
-of injecting `session.jsonl` switches; it is **only** meaningful for InpOnly
-sessions (VpRecord `.inp`s don't carry the COM-driven switches — see Recording).
+it, a replay can cut off mid-animation right after the last input.
 
 Single-sided: one ROM, one session, one NVRAM in; one trace directory out. The `<zip-stem>` segment in the default `-OutDir` keeps factory and modded runs side by side under the same session without clashing.
 
@@ -326,9 +317,9 @@ Sessions land at `.\sessions\<UTC>\` relative to the working directory.
 
 ```
 sessions/<utc>/
-├── session.jsonl              # canonical input timeline (kind:"meta" + kind:"switch" + observations)
+├── session.jsonl              # canonical input timeline (kind:"meta" + kind:"switch")
 ├── session.meta.json          # convenience summary (ROM/table sha256, mode, etc.) — see "Tagging" below
-├── session.inp                # MAME .inp — written by VpRecord and InpOnly modes
+├── switchlog.jsonl            # raw switch-edge log from the patched DLL (folded into session.jsonl)
 └── replays/<rom-zip-stem>/<utc>/   # written by replay.py; one dir per ROM zip
     ├── roms/<rom>.zip         # the ROM zip used (copied from --rom-zip)
     ├── nvram/<rom>.nv         # the seeded NVRAM (copied from --nvram)
@@ -390,7 +381,7 @@ up with `trace.state.jsonl` and the switch log — the fastest way to eyeball
 
 `session.meta.json` is meant to be extended after recording with two
 human-curated fields so sessions can be picked by what they exercise without
-playing the `.inp` back:
+replaying them:
 
 - `labels`: array of short kebab-case strings naming what the session hits
   (e.g. `["travicom-mode"]`, `["multiball-start", "extra-ball"]`).
@@ -407,8 +398,8 @@ playing the `.inp` back:
 }
 ```
 
-Add these immediately after recording — sessions are expensive to recapture
-and the `.inp` is opaque. When picking a session to drive a replay (e.g. to
+Add these immediately after recording — sessions are expensive to recapture.
+When picking a session to drive a replay (e.g. to
 validate a patch on a particular code path), grep `sessions/*/session.meta.json`
 for the relevant label first.
 
@@ -424,10 +415,9 @@ For a typical mod-validation workflow:
 
 ## Known limits
 
-- **`-Mode VpVpm` is broken and superseded.** VPinMAME is `InprocServer32`: an external PowerShell can't attach to VP's running emulator — it gets its own separate instance whose `.Running` stays `False`. This is fixed by `-Mode VpRecord` (the default), which runs the recorder inside VP's process via the patched DLL. VpVpm is kept in code for reference only.
 - **VP physics is not bit-deterministic.** A recorded session captures the **switch-edge stream VP wrote into VPM** (the `switchlog.jsonl` / `kind:"switch"` records), not the keystrokes that caused it. Re-running VP would not reproduce the same session. The skill never re-runs VP at replay time; switches go directly into libpinmame via `PinmameSetSwitch`.
 - **Time keys are simulated seconds, not CPU cycles** (no cycle counter is exported by either libpinmame or VPM). Two-ROM diffs therefore align by event index, not by `t`.
-- **Switch capture is edge-triggered at the `vp_putSwitch` chokepoint**, so every switch transition VP issues is logged with no polling window to miss it (this replaced an earlier per-frame `swMatrix`-diff recorder). The `-PollHz` knob only affects the broken VpVpm mode. A genuine input timing floor remains the emulation clock's resolution, but recorded edges are faithful to what VP drove.
+- **Switch capture is edge-triggered at the `vp_putSwitch` chokepoint**, so every switch transition VP issues is logged with no polling window to miss it (this replaced an earlier per-frame `swMatrix`-diff recorder). A genuine input timing floor remains the emulation clock's resolution, but recorded edges are faithful to what VP drove.
 - **`schemas/switches/<rom>.json` ships only for `congo_21`.** New ROMs trigger a discovery scan written to `<rom>.discovered.json`; promote it to `<rom>.json` after adding labels.
 - **DMD frames are stored as raw `.bin`**, not PNG, to keep the replay itself free of image-library dependencies. Width/height/bits-per-pixel live in `dmd.index.jsonl`. Render to PNG with `replay/render_dmd.py` (needs Pillow); see "Inspecting DMD frames" above.
 
@@ -436,18 +426,19 @@ For a typical mod-validation workflow:
 ```
 ${CLAUDE_PLUGIN_ROOT}/
 ├── SKILL.md                          # this file
-├── record.ps1                        # session capture (PS — launches VP, Windows-specific)
+├── record.ps1                        # session capture (PS — launches VP, Windows)
+├── record.sh                         # session capture (bash — launches VPX, macOS)
 ├── init_nvram.py                     # produce a freshly-reset NVRAM snapshot per ROM zip
 ├── replay.py                         # single-sided headless replay (+ --interactive)
 ├── dbg.py                            # thin client for the --interactive debugger socket
 ├── bin/
-│   ├── VPinMAME64.dll                # patched VPinMAME — VPINMAME_SWITCHLOG (replayable) + VPINMAME_RECORD (legacy .inp)
+│   ├── VPinMAME64.dll                # patched VPinMAME — VPINMAME_SWITCHLOG switch-edge recorder (Windows record.ps1)
+│   ├── libpinmame.dylib              # patched libpinmame — VPINMAME_SWITCHLOG recorder (macOS record.sh) + replay
 │   ├── pinmame64.dll                 # patched libpinmame — used by replay_host.py
 │   └── libpinmame.dll                # canonical-name copy of pinmame64.dll (loader alias)
 ├── lib/
 │   ├── Common.ps1                    # Write-Step/Ok/Warn2, SHA-256, env, archive (record.ps1)
-│   ├── SessionSchema.ps1             # RpSessionWriter + meta reader (record.ps1)
-│   └── VpmCom.ps1                    # VPinMAME COM wrapper (record.ps1)
+│   └── SessionSchema.ps1             # RpSessionWriter + meta reader (record.ps1)
 ├── replay/
 │   ├── replay_host.py                # libpinmame ctypes driver — event-driven; spawns
 │   │                                 #   a worker thread that blocks on PinmameDebugWait.
@@ -462,11 +453,12 @@ ${CLAUDE_PLUGIN_ROOT}/
         └── congo_21.json
 ```
 
-`record.ps1` stays PowerShell because launching Visual Pinball and
-monitoring its process is genuinely Windows-specific (the VPINMAME COM
-wrapper, the patched-DLL env var, the process lifecycle). The
-investigation-side wrappers (`replay`, `init_nvram`) are Python because
-they're pure orchestration over `replay_host.py`.
+The recorder is split by OS — `record.ps1` (PowerShell) launches Visual
+Pinball on Windows, `record.sh` (bash) launches VPX on macOS — because
+launching the table and monitoring its process is platform-specific (the
+patched-DLL env var, the window/process lifecycle). Both write the same
+`session.jsonl`. The investigation-side wrappers (`replay`, `init_nvram`)
+are Python because they're pure orchestration over `replay_host.py`.
 
 ## References
 

@@ -47,7 +47,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import sys
 import threading
 import time
@@ -419,12 +418,6 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--dbg-port", type=int, default=47655,
                     help="TCP port for the interactive debugger control socket "
                          "(127.0.0.1). Default 47655.")
-    ap.add_argument("--playback-inp", type=Path, default=None,
-                    help="MAME .inp recording to play back natively via PinMAME's "
-                         "VPINMAME_PLAYBACK path. When set, the emulator replays the "
-                         "recorded input ports itself; session.jsonl switch events (if "
-                         "any) are ignored. This is the faithful way to replay a "
-                         "VpRecord/InpOnly session — those store input only in the .inp.")
     ap.add_argument("--sim-step", type=float, default=0.001)
     ap.add_argument("--max-sec", type=float, default=600.0)
     ap.add_argument("--quiet", action="store_true")
@@ -735,28 +728,6 @@ def main(argv: list[str]) -> int:
     config.sampleRate  = 44100
     # vpmPath is the *parent* of the pinmame directory; libpinmame appends "\pinmame\" internally.
     vpm_base = str(args.pinmame_dir.parent)
-
-    # Native .inp playback: PinMAME's run_game() opens the file named by the
-    # VPINMAME_PLAYBACK env var from the FILETYPE_INPUTLOG search dir, which
-    # libpinmame hard-wires to `vpmPath + "inp"` (ComposePath concatenates with
-    # NO separator, and there is no PinmameSetPath for INPUTLOG — see the
-    # explicit ROMS/NVRAM/CONFIG/HISCORE overrides below for why). So we point
-    # vpmPath at <out>/ (trailing sep) → INPUTLOG resolves to <out>/inp, stage
-    # the recording there as <rom>.inp, and let the emulator replay the recorded
-    # input ports itself. roms/nvram/cfg/hi are overridden after SetConfig, so
-    # repointing vpmPath only moves the (unused here) samples/memcard/state
-    # defaults; the lone other use is an <vpmPath>/alias.txt probe (harmless).
-    if args.playback_inp is not None:
-        if not args.playback_inp.is_file():
-            raise SystemExit(f"--playback-inp not found: {args.playback_inp}")
-        vpm_base = str(args.out) + os.sep
-        inp_dir = args.out / "inp"
-        inp_dir.mkdir(parents=True, exist_ok=True)
-        staged = inp_dir / f"{args.rom}.inp"
-        shutil.copy2(args.playback_inp, staged)
-        os.environ["VPINMAME_PLAYBACK"] = args.rom
-        log(f"[replay_host] native .inp playback: {staged} "
-            f"(VPINMAME_PLAYBACK={args.rom})")
 
     vpm_bytes = vpm_base.encode("utf-8")
     config.vpmPath = vpm_bytes[:PINMAME_MAX_PATH - 1]

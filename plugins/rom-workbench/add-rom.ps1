@@ -16,7 +16,8 @@
 
     The VPX table is third-party community content (VPUniverse / VPForums) and is never
     auto-downloaded. Pass -Table to register a path you already have; omit -Table to be
-    prompted, or pass -SkipTable to record without a table (record.ps1 -Mode InpOnly only).
+    prompted, or pass -SkipTable to stage the ROM now and register a table later. A table
+    is required before record.ps1 can capture a session.
 
 .PARAMETER RomZip
     Path to a ROM zip (the same shape VPM expects under its roms\ dir).
@@ -29,7 +30,8 @@
     config records the in-Tables location.
 
 .PARAMETER SkipTable
-    Don't prompt for a table; record record.ps1 -Mode InpOnly until one is registered.
+    Don't prompt for a table; stage the ROM only. record.ps1 needs a table registered
+    (re-run add-rom.ps1 -Table <vpx>) before it can record.
 
 .PARAMETER ConfigPath
     Path to the project config file. Default: .\config.json (relative to CWD, i.e. the
@@ -139,7 +141,7 @@ elseif ($existing -and -not $Force) {
     $resolvedTable = $existing
 }
 elseif ($SkipTable) {
-    Write-Warn2 "Skipping table registration. record.ps1 -Rom $Rom will require -Mode InpOnly."
+    Write-Warn2 "Skipping table registration. record.ps1 -Rom $Rom needs a table — re-run add-rom.ps1 -Rom $Rom -Table <vpx> first."
 }
 else {
     Write-Host ""
@@ -147,7 +149,7 @@ else {
     Write-Host "Options:"
     Write-Host "  [1] Open VPUniverse search; drop the .vpx into $tablesDir and re-run add-rom.ps1 -Rom $Rom."
     Write-Host "  [2] Paste a .vpx path now."
-    Write-Host "  [3] Skip (record.ps1 -Rom $Rom -Mode InpOnly only)."
+    Write-Host "  [3] Skip for now (stage the ROM; register a table later to record)."
     Write-Host "  [4] Cancel."
     $choice = Read-Host "Choose [1/2/3/4]"
     switch ($choice) {
@@ -187,7 +189,7 @@ Write-Host "  Staged ROM:   $stagedZip"
 if ($resolvedTable) {
     Write-Host "  VPX table:    $resolvedTable"
 } else {
-    Write-Host "  VPX table:    (none — use -Mode InpOnly)" -ForegroundColor Yellow
+    Write-Host "  VPX table:    (none — register one with -Table before recording)" -ForegroundColor Yellow
 }
 Write-Host ""
 Write-Host "Next: record.ps1 -Rom $Rom" -ForegroundColor Yellow

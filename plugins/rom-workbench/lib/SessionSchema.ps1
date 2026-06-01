@@ -30,15 +30,6 @@ class RpSessionWriter {
         $this._WriteRecord(@{ t = $t; kind = 'switch'; n = $n; on = $on })
     }
 
-    [void] WriteSolenoidEvt([double] $t, [int] $n, [bool] $on) {
-        $this._WriteRecord(@{ t = $t; kind = 'solenoid_evt'; n = $n; on = $on })
-    }
-
-    [void] WriteObservation([double] $t, [string] $kind, [int] $n, [int] $v) {
-        if ($kind -notin @('lamp', 'sol', 'gi')) { throw "bad obs kind $kind" }
-        $this._WriteRecord(@{ t = $t; kind = $kind; n = $n; v = $v })
-    }
-
     [void] WriteNote([double] $t, [string] $msg) {
         $this._WriteRecord(@{ t = $t; kind = 'note'; msg = $msg })
     }

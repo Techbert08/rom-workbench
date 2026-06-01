@@ -78,11 +78,6 @@ def parse_args() -> argparse.Namespace:
                          "TCP socket (drive with dbg.py) until 'quit'. Implies --trace dbg.")
     ap.add_argument("--dbg-port", type=int, default=47655,
                     help="TCP port for the interactive control socket. Default 47655.")
-    ap.add_argument("--playback-inp", action="store_true",
-                    help="Replay the session's MAME .inp natively via PinMAME's "
-                         "VPINMAME_PLAYBACK path instead of injecting session.jsonl "
-                         "switch events. Required for VpRecord/InpOnly sessions, whose "
-                         "input lives only in session.inp (the jsonl is meta-only).")
     ap.add_argument("--out-dir", type=Path, default=None,
                     help="Output dir. Default: <session>/replays/<rom-zip-stem>/<utc>/.")
     ap.add_argument("--sim-step", type=float, default=0.001,
@@ -199,16 +194,7 @@ def main() -> int:
         if args.dbg_mem:       cmd += ["--dbg-mem", args.dbg_mem]
     if args.interactive:
         cmd += ["--interactive", "--dbg-port", str(args.dbg_port)]
-    if args.playback_inp:
-        inp = args.session / "session.inp"
-        if not inp.is_file():
-            raise SystemExit(
-                f"--playback-inp set but no .inp in session: {inp}"
-            )
-        cmd += ["--playback-inp", str(inp.resolve())]
 
-    if args.playback_inp:
-        print(f"==> replay_host: native .inp playback ({args.session / 'session.inp'})")
     if args.interactive:
         print(f"==> replay_host: INTERACTIVE session, control port {args.dbg_port}")
         print(f"    Drive it with:  python {Path(__file__).parent / 'dbg.py'} "

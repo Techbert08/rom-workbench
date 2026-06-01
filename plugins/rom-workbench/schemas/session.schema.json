@@ -2,7 +2,7 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://github.com/zachc/congo/record-pinball/session.schema.json",
     "title": "record-pinball session.jsonl record",
-    "description": "Newline-delimited JSON records emitted by record.ps1. The first record MUST be of kind 'meta'. All other records are timestamped events. Time `t` is seconds since PinmameRun returned (or, in InpOnly mode, seconds since recording started).",
+    "description": "Newline-delimited JSON records emitted by record.ps1 (Windows) / record.sh (macOS). The first record MUST be of kind 'meta'. All other records are timestamped events. Time `t` is the emulation-clock timestamp of each switch edge, as logged by the patched VPinMAME DLL.",
     "oneOf": [
         {
             "type": "object",
@@ -16,13 +16,12 @@
                 "table_sha256": { "type": ["string", "null"] },
                 "vpm_version": { "type": ["string", "null"] },
                 "pinmame_version": { "type": ["string", "null"] },
-                "mode": { "enum": ["VpVpm", "InpOnly"] },
-                "poll_hz": { "type": "integer", "minimum": 1 },
+                "mode": { "enum": ["VpRecord"] },
                 "start_ts": { "type": "string", "format": "date-time" },
                 "end_ts": { "type": ["string", "null"], "format": "date-time" },
-                "sample_loss_count": { "type": "integer", "minimum": 0 },
                 "host": { "type": "string" },
-                "comment": { "type": ["string", "null"] }
+                "comment": { "type": ["string", "null"] },
+                "session_jsonl": { "type": "string" }
             },
             "additionalProperties": false
         },
@@ -35,30 +34,6 @@
                 "kind": { "const": "switch" },
                 "n": { "type": "integer", "minimum": 1, "maximum": 256 },
                 "on": { "type": "boolean" }
-            },
-            "additionalProperties": false
-        },
-        {
-            "type": "object",
-            "required": ["t", "kind", "n", "on"],
-            "description": "Solenoid event observation (from VPM OnSolenoid). Output-side; used as a diff baseline.",
-            "properties": {
-                "t": { "type": "number", "minimum": 0 },
-                "kind": { "const": "solenoid_evt" },
-                "n": { "type": "integer", "minimum": 1, "maximum": 256 },
-                "on": { "type": "boolean" }
-            },
-            "additionalProperties": false
-        },
-        {
-            "type": "object",
-            "required": ["t", "kind", "n", "v"],
-            "description": "Lamp / solenoid / GI string observation polled from VPM. Output-side; used as a diff baseline.",
-            "properties": {
-                "t": { "type": "number", "minimum": 0 },
-                "kind": { "enum": ["lamp", "sol", "gi"] },
-                "n": { "type": "integer", "minimum": 0 },
-                "v": { "type": "integer" }
             },
             "additionalProperties": false
         },
