@@ -1,0 +1,149 @@
+From 50cac89947caab5361046b0a87f635df925ffb5e Mon Sep 17 00:00:00 2001
+From: Zach Clifford <zachclifford@gmail.com>
+Date: Sat, 30 May 2026 12:50:28 -0400
+Subject: [PATCH 2/3] Add event-driven switch recorder at vp_putSwitch
+ chokepoint
+
+Vp-driven (COM) switch changes go put_Switch -> vp_putSwitch -> core_setSw,
+straight into coreGlobals.swMatrix, bypassing MAME's input_port_value[]. The
+existing VPINMAME_RECORD .inp recorder serializes only the input-port plane, so
+it captures nothing of a VP-physics session and those .inp files are unplayable.
+
+vp_putSwitch is the single choke point every *external* switch change funnels
+through (COM put_Switch/put_Switches and libpinmame PinmameSetSwitch/Switches).
+Hook it: when VPINMAME_SWITCHLOG names a file, append each change as a JSONL
+'switch' record stamped with timer_get_time() -- the emulation clock the replay
+host's SetTimeFence/sim_t advances -- so the stream replays with faithful timing
+and no outside-the-DLL polling. Internally derived switches (flipper EOS, via
+core_setSw directly) are not logged; they regenerate deterministically on replay.
+
+Also gate the m6809 debug hooks (pinmame_dbg_check_pc/mem, defined only in
+libpinmame.cpp) on LIBPINMAME so the VPinMAME COM target -- which has no debugger
+and didn't link those symbols -- builds again. It had been unbuildable since the
+Debug API patch landed.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+diff --git a/src/cpu/m6809/m6809.c b/src/cpu/m6809/m6809.c
+index 65c77b8e..95ccd70d 100644
+--- a/src/cpu/m6809/m6809.c
++++ b/src/cpu/m6809/m6809.c
+@@ -244,7 +244,14 @@ int m6809_ICount=50000;
+  * debugger is detached this is a near-no-op (one load + branch); when a
+  * watchpoint matches it captures regs and blocks the CPU until the host
+  * resumes. The RM/WM wrappers use inline functions instead of statement
+- * expressions for MSVC portability. */
++ * expressions for MSVC portability.
++ *
++ * Gated on LIBPINMAME: the event-driven debugger lives in libpinmame.cpp,
++ * which only the pinmame_shared (libpinmame) target links. The VPinMAME
++ * COM build does not provide pinmame_dbg_check_* and does not need the
++ * debugger, so there RM/WM stay the plain memory accessors (zero overhead,
++ * no unresolved externals). */
++#ifdef LIBPINMAME
+ extern int pinmame_dbg_check_mem(unsigned int addr, int is_write, unsigned int value);
+ 
+ static __inline unsigned int pm_rm_wp(unsigned int addr) {
+@@ -260,6 +267,10 @@ static __inline void pm_wm_wp(unsigned int addr, unsigned int v) {
+ /* these are re-defined in m6809.h TO RAM, ROM or functions in cpuintrf.c */
+ #define RM(Addr)		pm_rm_wp((unsigned int)(Addr))
+ #define WM(Addr,Value)	pm_wm_wp((unsigned int)(Addr), (unsigned int)(Value))
++#else
++#define RM(Addr)		M6809_RDMEM(Addr)
++#define WM(Addr,Value)	M6809_WRMEM(Addr,Value)
++#endif
+ #define ROP(Addr)		M6809_RDOP(Addr)
+ #define ROP_ARG(Addr)	M6809_RDOP_ARG(Addr)
+ 
+@@ -712,9 +723,12 @@ int m6809_execute(int cycles)	/* NS 970908 */
+ 			 * blocks this emulation thread until host calls Continue
+ 			 * or Step. Fires BEFORE the matched instruction executes,
+ 			 * so the captured A/B/X/Y/U/S are exactly the inputs to
+-			 * that instruction. */
++			 * that instruction. Gated on LIBPINMAME (see RM/WM note above):
++			 * the VPinMAME COM build has no debugger and no such symbol. */
++#ifdef LIBPINMAME
+ 			extern int pinmame_dbg_check_pc(unsigned int pc);
+ 			(void)pinmame_dbg_check_pc((unsigned int)PCD);
++#endif
+ 
+ 			CALL_MAME_DEBUG;
+ 
+diff --git a/src/wpc/vpintf.c b/src/wpc/vpintf.c
+index ba747faa..84da6c11 100644
+--- a/src/wpc/vpintf.c
++++ b/src/wpc/vpintf.c
+@@ -3,6 +3,47 @@
+ #include "mech.h"
+ #include "vpintf.h"
+ #include "snd_cmd.h"
++#include "timer.h"
++#include <stdio.h>
++#include <stdlib.h>
++
++/*------------------------------------------------------------------
++/  Switch recorder.
++/
++/  vp_putSwitch (vpintf.h) is the single choke point every *externally
++/  driven* switch change passes through: the COM Controller
++/  (put_Switch / put_Switches) and libpinmame (PinmameSetSwitch /
++/  PinmameSetSwitches) all funnel into it. Switch changes the core
++/  derives internally (e.g. flipper end-of-stroke) call core_setSw
++/  directly and are deliberately NOT logged here -- they are
++/  regenerated deterministically when the recorded stream is replayed.
++/
++/  When the VPINMAME_SWITCHLOG env var names a file, each change is
++/  appended as a JSONL "switch" record stamped with the emulation clock
++/  (timer_get_time() -- the same time base PinmameSetTimeFence advances),
++/  so the stream replays with faithful relative timing and never relies
++/  on any polling from outside the DLL. The env var is read once, lazily,
++/  on the first switch change.
++/------------------------------------------------------------------*/
++static FILE *g_swlog       = NULL;
++static int   g_swlog_state = 0; /* 0=unchecked, 1=open, -1=disabled */
++
++void vp_switchlog(int swNo, int newStat) {
++  if (g_swlog_state == 0) {
++    const char *path = getenv("VPINMAME_SWITCHLOG");
++    if (path && *path) {
++      g_swlog = fopen(path, "w");
++      g_swlog_state = g_swlog ? 1 : -1;
++    } else {
++      g_swlog_state = -1;
++    }
++  }
++  if (g_swlog_state == 1) {
++    fprintf(g_swlog, "{\"t\":%.6f,\"n\":%d,\"on\":%d,\"kind\":\"switch\"}\n",
++            timer_get_time(), swNo, newStat ? 1 : 0);
++    fflush(g_swlog);
++  }
++}
+ 
+ static struct {
+   UINT8  lastPhysicsOutput[CORE_MODOUT_MAX];
+diff --git a/src/wpc/vpintf.h b/src/wpc/vpintf.h
+index 7b4f1f3b..d7a25df1 100644
+--- a/src/wpc/vpintf.h
++++ b/src/wpc/vpintf.h
+@@ -42,10 +42,17 @@ INLINE int vp_getWPCNumbering(void) { return WPCNUMBERING; }
+ /-------------------------------------*/
+ int vp_getLamp(int lampNo);
+ 
++/*------------------------------------
++/  Record an externally-driven switch change to the switch log.
++/  No-op unless the VPINMAME_SWITCHLOG env var names an output file.
++/  Implemented in vpintf.c; see there for the rationale.
++/-------------------------------------*/
++void vp_switchlog(int swNo, int newStat);
++
+ /*------------------------------------
+ /  set status of a switch (0=off, !0=on)
+ /-------------------------------------*/
+-INLINE void vp_putSwitch(int swNo, int newStat) { core_setSw(swNo, newStat); }
++INLINE void vp_putSwitch(int swNo, int newStat) { vp_switchlog(swNo, newStat); core_setSw(swNo, newStat); }
+ 
+ /*------------------------------------
+ /  get status of a switch (0=off, !0=on)
+-- 
+2.49.0
+

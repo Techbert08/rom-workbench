@@ -1,0 +1,120 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://github.com/zachc/congo/record-pinball/trace.schema.json",
+    "title": "record-pinball replay trace output records",
+    "description": "Records emitted by trace_state.py, trace_memwatch.py, trace_dmd.py, and the parsed form of trace_cputrace.py. Each trace file is JSONL; the first record MUST be a trace_meta. Times are simulated-seconds from PinmameRun, matching session.jsonl `t`.",
+    "oneOf": [
+        {
+            "type": "object",
+            "required": ["v", "kind", "trace_kind", "session_path", "rom", "start_ts"],
+            "properties": {
+                "v": { "const": 1 },
+                "kind": { "const": "trace_meta" },
+                "trace_kind": { "enum": ["state", "cputrace", "memwatch", "dmd", "sound"] },
+                "session_path": { "type": "string" },
+                "rom": { "type": "string" },
+                "rom_dir": { "type": "string" },
+                "start_ts": { "type": "string", "format": "date-time" },
+                "end_ts": { "type": ["string", "null"], "format": "date-time" },
+                "sim_step_seconds": { "type": ["number", "null"] },
+                "options": { "type": "object", "additionalProperties": true }
+            },
+            "additionalProperties": false
+        },
+        {
+            "type": "object",
+            "description": "Lamp/solenoid/GI/switch state observation from libpinmame.",
+            "required": ["t", "kind", "n", "v"],
+            "properties": {
+                "t": { "type": "number" },
+                "kind": { "enum": ["lamp", "sol", "gi", "switch"] },
+                "n": { "type": "integer" },
+                "v": { "type": "integer" }
+            },
+            "additionalProperties": false
+        },
+        {
+            "type": "object",
+            "description": "CPU state change reported via libpinmame OnStateUpdated callback.",
+            "required": ["t", "kind", "state"],
+            "properties": {
+                "t": { "type": "number" },
+                "kind": { "const": "pm_state" },
+                "state": { "type": "integer" }
+            },
+            "additionalProperties": false
+        },
+        {
+            "type": "object",
+            "description": "Single CPU-trace line parsed from pinmamed.exe `trace` debugger output. `pc` is hex without 0x.",
+            "required": ["kind", "pc"],
+            "properties": {
+                "t": { "type": ["number", "null"], "description": "Simulated-seconds estimate; may be null if not derivable from the raw trace line." },
+                "kind": { "const": "cpu" },
+                "pc": { "type": "string", "pattern": "^[0-9a-fA-F]{4}$" },
+                "bank": { "type": ["string", "null"], "pattern": "^[0-9a-fA-F]+$" },
+                "disasm": { "type": ["string", "null"] },
+                "regs": {
+                    "type": ["object", "null"],
+                    "additionalProperties": { "type": "string" }
+                }
+            },
+            "additionalProperties": false
+        },
+        {
+            "type": "object",
+            "description": "Memory write captured by MAME `wpset` debugger watchpoint.",
+            "required": ["kind", "addr", "value", "pc"],
+            "properties": {
+                "t": { "type": ["number", "null"] },
+                "kind": { "const": "memwrite" },
+                "addr": { "type": "string", "pattern": "^[0-9a-fA-F]{1,8}$" },
+                "value": { "type": "string", "pattern": "^[0-9a-fA-F]{1,8}$" },
+                "pc": { "type": "string", "pattern": "^[0-9a-fA-F]{4}$" },
+                "size": { "type": ["integer", "null"], "enum": [1, 2, 4, null] }
+            },
+            "additionalProperties": false
+        },
+        {
+            "type": "object",
+            "description": "DMD frame written by trace_dmd.py. Each frame is also saved as a PNG at `dmd/<frame>.png` next to dmd.index.jsonl.",
+            "required": ["t", "kind", "frame", "sha256"],
+            "properties": {
+                "t": { "type": "number" },
+                "kind": { "const": "dmd" },
+                "frame": { "type": "integer", "minimum": 0 },
+                "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                "width": { "type": "integer" },
+                "height": { "type": "integer" },
+                "bits_per_pixel": { "type": "integer" }
+            },
+            "additionalProperties": false
+        },
+        {
+            "type": "object",
+            "description": "Audio stream format, emitted once by the sound trace when libpinmame starts the stream (OnAudioAvailable). The raw interleaved PCM is streamed to audio/audio.s16le.raw next to this index.",
+            "required": ["t", "kind", "sample_rate", "channels", "pcm_format"],
+            "properties": {
+                "t": { "type": "number" },
+                "kind": { "const": "audio_format" },
+                "sample_rate": { "type": "number", "description": "Actual machine sample rate (Hz)." },
+                "channels": { "type": "integer", "enum": [1, 2] },
+                "pcm_format": { "const": "s16le" },
+                "samples_per_frame": { "type": "integer", "description": "Per-channel frames per emulated video frame." }
+            },
+            "additionalProperties": false
+        },
+        {
+            "type": "object",
+            "description": "One audio chunk written by the sound trace (one per OnAudioUpdated callback). `sample_offset` is the cumulative per-channel frame position of this chunk's first sample in audio/audio.s16le.raw; `samples` is its per-channel frame count. Together they map sim-time `t` to a sample position for muxing.",
+            "required": ["t", "kind", "sample_offset", "samples"],
+            "properties": {
+                "t": { "type": "number" },
+                "kind": { "const": "audio" },
+                "sample_offset": { "type": "integer", "minimum": 0 },
+                "samples": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": false
+        }
+    ]
+}

@@ -1,0 +1,174 @@
+From e6dc2fa16ef4e3b3ddb99d87144091839386574d Mon Sep 17 00:00:00 2001
+From: Zach Clifford <zachclifford@gmail.com>
+Date: Sat, 30 May 2026 21:43:46 -0400
+Subject: [PATCH 3/3] Add cross-thread emulation-clock + fence-reached query
+ for replay pacing
+
+The libpinmame host paces the emulator by posting time fences and needs to
+block until the worker thread actually reaches each fence. Two new primitives
+make that closed loop possible:
+
+- cpuexec.c publishes timer_get_time() into a volatile time_fence_published_time
+  every timeslice (on the emulation thread). timer_get_time() is only valid in
+  the CPU-execution context, so a host on another thread must read this copy.
+
+- vpintf.c exposes vp_getEmuTime() (reads the published clock) and
+  vp_timeFenceReached() (the exact offset-corrected expression cpuexec uses
+  internally, so the host polls the right predicate rather than comparing the
+  clock to the nominal fence, which is wrong by time_fence_global_offset).
+
+- libpinmame.{cpp,h} export these as PinmameGetEmulationTime() and
+  PinmameTimeFenceReached() (both short-circuit when not running).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+diff --git a/src/cpuexec.c b/src/cpuexec.c
+index b5ad68d4..7047ca83 100644
+--- a/src/cpuexec.c
++++ b/src/cpuexec.c
+@@ -210,6 +210,12 @@ static double perfect_interleave;
+ // PinMame: time fence global offset
+ volatile double time_fence_global_offset = 0.0;
+ 
++// PinMame: most recent emulation clock (timer_get_time), published every
++// timeslice on the emulation thread so a host on another thread can read it.
++// timer_get_time() is only valid in the CPU-execution context, so a host MUST
++// read this published copy, not call timer_get_time() directly.
++volatile double time_fence_published_time = 0.0;
++
+ 
+ /*************************************
+  *
+@@ -975,11 +981,15 @@ static void cpu_timeslice(void)
+ 		time_to_quit = 1;
+ #endif
+ 
++	// PinMAME: publish the emulation clock for cross-thread host readers (valid
++	// only here, on the emulation thread). Done every timeslice, fence or not.
++	time_fence_published_time = timer_get_time();
++
+ 	// PinMAME: allow external synchronization by suspending emulation when a time fence is reached
+ 	// NOTE: if debugging stutter issues or the like, disable this mechanism in the core scripts, or directly here
+ 	if (options.time_fence != 0.0 && time_fence_is_supported())
+ 	{
+-		const double now = timer_get_time();
++		const double now = time_fence_published_time;
+ 		if (now - options.time_fence - time_fence_global_offset >= 0.)
+ 		{
+ 			if (now - options.time_fence - time_fence_global_offset >= 1.0)
+diff --git a/src/libpinmame/libpinmame.cpp b/src/libpinmame/libpinmame.cpp
+index 6b9cfe20..66ae615a 100644
+--- a/src/libpinmame/libpinmame.cpp
++++ b/src/libpinmame/libpinmame.cpp
+@@ -1131,6 +1131,40 @@ PINMAMEAPI void PinmameSetTimeFence(const double timeInS)
+ 	vp_setTimeFence(timeInS);
+ }
+ 
++/******************************************************
++ * PinmameGetEmulationTime
++ *
++ * Current value of the emulation clock (timer_get_time) -- the SAME time
++ * base SetTimeFence advances and that switch events are stamped with during
++ * recording. Lets the host close the replay loop: after posting a fence it
++ * can poll this until the emulator has actually reached the fence, instead
++ * of sleeping a fixed (and on Windows, coarse/unreliable) wall interval and
++ * hoping. Returns 0 before the machine is running. Read cross-thread (the
++ * emulator advances it on the worker thread); a benign race for a monotonic
++ * clock we only compare with >=.
++ ******************************************************/
++
++PINMAMEAPI double PinmameGetEmulationTime()
++{
++	return _isRunning ? vp_getEmuTime() : 0.0;
++}
++
++/******************************************************
++ * PinmameTimeFenceReached
++ *
++ * 1 once the emulator's clock has reached the fence last set via
++ * SetTimeFence (so it is, or is about to be, blocked on it); 0 while it is
++ * still catching up. This is the correct thing for a host to poll after
++ * posting a fence -- it uses the same offset-corrected test the emulator
++ * uses internally, unlike comparing GetEmulationTime() to the nominal fence.
++ * Returns 1 if no fence is active or the machine isn't running.
++ ******************************************************/
++
++PINMAMEAPI int PinmameTimeFenceReached()
++{
++	return _isRunning ? vp_timeFenceReached() : 1;
++}
++
+ /******************************************************
+  * PinmameGetMaxSolenoids
+  ******************************************************/
+diff --git a/src/libpinmame/libpinmame.h b/src/libpinmame/libpinmame.h
+index 85a261bd..f1c9aed1 100644
+--- a/src/libpinmame/libpinmame.h
++++ b/src/libpinmame/libpinmame.h
+@@ -479,6 +479,8 @@ PINMAMEAPI void PinmameSetSolenoidMask(const int low, const uint32_t mask);
+ PINMAMEAPI PINMAME_MOD_OUTPUT_TYPE PinmameGetModOutputType(const int output, const int no);
+ PINMAMEAPI void PinmameSetModOutputType(const int output, const int no, const PINMAME_MOD_OUTPUT_TYPE type);
+ PINMAMEAPI void PinmameSetTimeFence(const double timeInS);
++PINMAMEAPI double PinmameGetEmulationTime();
++PINMAMEAPI int PinmameTimeFenceReached();
+ PINMAMEAPI int PinmameGetMaxSolenoids();
+ PINMAMEAPI int PinmameGetSolenoid(const int solNo);
+ PINMAMEAPI int PinmameGetChangedSolenoids(PinmameSolenoidState* const p_changedStates);
+diff --git a/src/wpc/vpintf.c b/src/wpc/vpintf.c
+index 84da6c11..7d9f7b44 100644
+--- a/src/wpc/vpintf.c
++++ b/src/wpc/vpintf.c
+@@ -355,6 +355,28 @@ void vp_setTimeFence(double timeInS)
+ 	}
+ }
+ 
++/* The emulation clock, published by the emulation thread (cpuexec.c). A host on
++   another thread MUST read this, not call timer_get_time() directly -- that is
++   only valid inside the CPU-execution context and returns 0 elsewhere. */
++extern volatile double time_fence_published_time;
++double vp_getEmuTime(void)
++{
++	return time_fence_published_time;
++}
++
++/* Has the emulator's clock reached the current time fence (and thus is, or is
++   about to be, blocked on it)? Uses the EXACT same expression cpuexec.c tests,
++   so a host can poll this to close the loop instead of comparing the clock to
++   the nominal fence directly -- that comparison is wrong because the emulator
++   targets (fence + time_fence_global_offset), the offset being -step from the
++   first fence. Returns 1 when no fence is active (emulator never blocks). */
++int vp_timeFenceReached(void)
++{
++	if (options.time_fence == 0.0)
++		return 1;
++	return (time_fence_published_time - options.time_fence - time_fence_global_offset) >= 0.0 ? 1 : 0;
++}
++
+ int vp_getMech(int mechNo) {
+ #if defined(VPINMAME) || defined(LIBPINMAME)
+   extern int g_fHandleMechanics;
+diff --git a/src/wpc/vpintf.h b/src/wpc/vpintf.h
+index d7a25df1..5677bdcb 100644
+--- a/src/wpc/vpintf.h
++++ b/src/wpc/vpintf.h
+@@ -124,6 +124,17 @@ int vp_getModOutputType(int output, int no);
+ /-----------*/
+ void vp_setTimeFence(double timeInS);
+ 
++/*-----------
++/  emulation clock (timer_get_time) published by the emulation thread; safe to
++/  read from any thread, unlike timer_get_time() itself
++/-----------*/
++double vp_getEmuTime(void);
++
++/*-----------
++/  1 if the emulator has reached the current time fence (or no fence is set)
++/-----------*/
++int vp_timeFenceReached(void);
++
+ /*-----------
+ / Mechanics
+ /------------*/
+-- 
+2.49.0
+

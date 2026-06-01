@@ -1,0 +1,1336 @@
+From efd3c21b2d38a6cfbc771adbf4bcb2fd6b40520e Mon Sep 17 00:00:00 2001
+From: Zach Clifford <zachclifford@gmail.com>
+Date: Sat, 30 May 2026 12:40:52 -0400
+Subject: [PATCH 1/3] Add event-driven debugger: m6809 hooks + PinmameDebug*
+ API + CMakeLists
+
+Adds the event-driven CPU debugger to libpinmame:
+- m6809 dispatch-loop hooks: pinmame_dbg_check_pc / pinmame_dbg_check_mem
+  (gated on LIBPINMAME so VPinMAME COM builds are unaffected)
+- Full PinmameDebug* API: Attach/Detach, AddBreakpoint/Watchpoint,
+  DebugWait (blocks emulation thread on condvar), Continue, Step
+- CMakeLists_libpinmame.txt for cmake -S . builds
+- Alias.cpp: upstream ROM alias additions (VPinMAME COM only)
+
+diff --git a/CMakeLists_libpinmame.txt b/CMakeLists_libpinmame.txt
+new file mode 100644
+index 00000000..e060cc0e
+--- /dev/null
++++ b/CMakeLists_libpinmame.txt
+@@ -0,0 +1,775 @@
++cmake_minimum_required(VERSION 3.25)
++
++set(PLATFORM "win" CACHE STRING "Platform")
++set(ARCH "x64" CACHE STRING "Arch")
++
++option(BUILD_SHARED "Option to build shared library" ON)
++option(BUILD_STATIC "Option to build static library" ON)
++
++message(STATUS "PLATFORM: ${PLATFORM}")
++message(STATUS "ARCH: ${ARCH}")
++
++message(STATUS "BUILD_SHARED: ${BUILD_SHARED}")
++message(STATUS "BUILD_STATIC: ${BUILD_STATIC}")
++
++if(PLATFORM STREQUAL "macos")
++   set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0)
++elseif(PLATFORM STREQUAL "ios" OR PLATFORM STREQUAL "ios-simulator")
++   set(CMAKE_SYSTEM_NAME iOS)
++   if (PLATFORM STREQUAL "ios-simulator")
++      set(CMAKE_OSX_SYSROOT iphonesimulator)
++   endif()
++   set(CMAKE_OSX_DEPLOYMENT_TARGET 17.0)
++elseif(PLATFORM STREQUAL "tvos")
++   set(CMAKE_SYSTEM_NAME tvOS)
++   set(CMAKE_OSX_DEPLOYMENT_TARGET 17.0)
++elseif(PLATFORM STREQUAL "android")
++   set(CMAKE_SYSTEM_NAME Android)
++   set(CMAKE_SYSTEM_VERSION 30)
++   set(CMAKE_ANDROID_ARCH_ABI arm64-v8a)
++endif()
++
++file(READ src/version.h version)
++string(REGEX MATCH "VERSION_MAJOR[ ]+([0-9]+)" _tmp ${version})
++set(VERSION_MAJOR "${CMAKE_MATCH_1}")
++string(REGEX MATCH "VERSION_MINOR[ ]+([0-9]+)" _tmp ${version})
++set(VERSION_MINOR "${CMAKE_MATCH_1}")
++string(REGEX MATCH "VERSION_REV[ ]+([0-9]+)" _tmp ${version})
++set(VERSION_REV "${CMAKE_MATCH_1}")
++
++project(pinmame VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_REV}"
++   DESCRIPTION "Cross-platform PinMAME library")
++
++if(PLATFORM STREQUAL "win")
++   if(ARCH STREQUAL "x86")
++      add_compile_definitions(WIN32)
++   endif()
++elseif(PLATFORM STREQUAL "macos")
++   if (ARCH STREQUAL "arm64")
++      set(CMAKE_OSX_ARCHITECTURES arm64)
++   elseif(ARCH STREQUAL "x64")
++      set(CMAKE_OSX_ARCHITECTURES x86_64)
++   endif()
++   set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
++   set(CMAKE_INSTALL_RPATH "@executable_path")
++elseif(PLATFORM STREQUAL "ios" OR PLATFORM STREQUAL "ios-simulator" OR PLATFORM STREQUAL "tvos")
++   set(CMAKE_OSX_ARCHITECTURES arm64)
++elseif(PLATFORM STREQUAL "linux" OR PLATFORM STREQUAL "android")
++   set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
++   set(CMAKE_INSTALL_RPATH "$ORIGIN")
++endif()
++
++set(CMAKE_CXX_STANDARD 20)
++set(CMAKE_C_STANDARD 99)
++
++set(CMAKE_CXX_VISIBILITY_PRESET hidden)
++set(CMAKE_C_VISIBILITY_PRESET hidden)
++
++add_compile_definitions(
++   HAS_M6809=1
++   HAS_M6808=1
++   HAS_M6800=1
++   HAS_M6803=1
++   HAS_M6802=1
++   HAS_ADSP2101=1
++   HAS_ADSP2105=1
++   HAS_Z80=1
++   HAS_M6502=1
++   HAS_M65C02=1
++   HAS_M68000=1
++   HAS_M68306=1
++   HAS_S2650=1
++   HAS_8080=1
++   HAS_8085A=1
++   HAS_I8035=1
++   HAS_I8039=1
++   HAS_I86=1
++   HAS_I88=1
++   HAS_I186=1
++   HAS_I188=1
++   HAS_4004=1
++   HAS_PPS4=1
++   HAS_SCAMP=1
++   HAS_I8051=1
++   HAS_I8752=1
++   HAS_TMS7000=1
++   HAS_AT91=1
++   HAS_ARM7=1
++   HAS_CDP1802=1
++   HAS_TMS9980=1
++   HAS_TMS9995=1
++   HAS_COP420=1
++   HAS_DAC=1
++   HAS_YM2151_YMFM=1
++   HAS_HC55516=1
++   HAS_MC3417=1
++   HAS_SAMPLES=1
++   HAS_TMS5220=1
++   HAS_AY8910=1
++   HAS_MSM5205=1
++   HAS_CUSTOM=1
++   HAS_BSMT2000=1
++   HAS_OKIM6295=1
++   HAS_ADPCM=1
++   HAS_VOTRAXSC01=1
++   HAS_SN76477=1
++   HAS_SN76496=1
++   HAS_DISCRETE=1
++   HAS_SP0250=1
++   HAS_TMS320AV120=1
++   HAS_M114S=1
++   HAS_YM3812=1
++   HAS_S14001A=1
++   HAS_YM2203=1
++   HAS_YM3526=1
++   HAS_TMS5110=1
++   HAS_SP0256=1
++   HAS_Y8950=1
++   HAS_ASTROCADE=1
++   HAS_YMF262=1
++   HAS_MEA8000=1
++   HAS_SAA1099=1
++   HAS_QSOUND=1
++
++   MAMEVER=7300
++   PINMAME
++   PINMAME_NO_UNUSED
++   LIBPINMAME
++   SAM_INCLUDE_COLORED
++
++   LSB_FIRST
++   PI=M_PI
++)
++
++if(PLATFORM STREQUAL "win" OR PLATFORM STREQUAL "win-mingw")
++   add_compile_definitions(
++      __LP64__
++   )
++else()
++   add_compile_definitions(
++      HAVE_UNISTD_H=1
++   )
++endif()
++
++add_definitions( "-DINLINE=static inline __attribute__((always_inline))" )
++
++set(PINMAME_SOURCES
++   src/artwork.c
++   src/artwork.h
++   src/audit.c
++   src/audit.h
++   src/cheat.c
++   src/cheat.h
++   src/common.c
++   src/common.h
++   src/config.c
++   src/config.h
++   src/cpu/adsp2100/2100dasm.c
++   src/cpu/adsp2100/adsp2100.c
++   src/cpu/adsp2100/adsp2100.h
++   src/cpu/arm7/arm7.c
++   src/cpu/arm7/arm7.h
++   src/cpu/arm7/arm7dasm.c
++   src/cpu/at91/at91.c
++   src/cpu/at91/at91.h
++   src/cpu/at91/at91dasm.c
++   src/cpu/cdp1802/1802dasm.c
++   src/cpu/cdp1802/cdp1802.c
++   src/cpu/cdp1802/cdp1802.h
++   src/cpu/cop400/410ops.c
++   src/cpu/cop400/420ops.c
++   src/cpu/cop400/cop400.h
++   src/cpu/cop400/cop420.c
++   src/cpu/cop400/cop420ds.c
++   src/cpu/i86/i86.c
++   src/cpu/i86/i86.h
++   src/cpu/i86/i86dasm.c
++   src/cpu/i4004/4004dasm.c
++   src/cpu/i4004/i4004.c
++   src/cpu/i4004/i4004.h
++   src/cpu/i8039/8039dasm.c
++   src/cpu/i8039/i8039.c
++   src/cpu/i8039/i8039.h
++   src/cpu/i8051/8051dasm.c
++   src/cpu/i8051/i8051.c
++   src/cpu/i8051/i8051.h
++   src/cpu/i8085/8085dasm.c
++   src/cpu/i8085/i8085.c
++   src/cpu/i8085/i8085.h
++   src/cpu/m6502/6502dasm.c
++   src/cpu/m6502/m6502.c
++   src/cpu/m6502/m6502.h
++   src/cpu/m6800/6800dasm.c
++   src/cpu/m6800/m6800.c
++   src/cpu/m6800/m6800.h
++   src/cpu/m6809/6809dasm.c
++   src/cpu/m6809/m6809.c
++   src/cpu/m6809/m6809.h
++   src/cpu/m68000/generated_by_m68kmake/m68kopac.c
++   src/cpu/m68000/generated_by_m68kmake/m68kops.c
++   src/cpu/m68000/generated_by_m68kmake/m68kopdm.c
++   src/cpu/m68000/generated_by_m68kmake/m68kopnz.c
++   src/cpu/m68000/generated_by_m68kmake/m68kops.h
++   src/cpu/m68000/m68kcpu.c
++   src/cpu/m68000/m68kcpu.h
++   src/cpu/m68000/m68kdasm.c
++   src/cpu/m68000/m68kmame.c
++   src/cpu/m68000/m68kmame.h
++   src/cpu/pps4/pps4.c
++   src/cpu/pps4/pps4.h
++   src/cpu/pps4/pps4dasm.c
++   src/cpu/s2650/2650dasm.c
++   src/cpu/s2650/s2650.c
++   src/cpu/s2650/s2650.h
++   src/cpu/scamp/scamp.c
++   src/cpu/scamp/scamp.h
++   src/cpu/scamp/scampdsm.c
++   src/cpu/tms7000/7000dasm.c
++   src/cpu/tms7000/tms7000.c
++   src/cpu/tms7000/tms7000.h
++   src/cpu/tms9900/9900dasm.c
++   src/cpu/tms9900/tms9900.c
++   src/cpu/tms9900/tms9900.h
++   src/cpu/tms9900/tms9980a.c
++   src/cpu/tms9900/tms9995.c
++   src/cpu/z80/z80.c
++   src/cpu/z80/z80.h
++   src/cpu/z80/z80dasm.c
++   src/cpu/z80/z80dasm.h
++   src/cpuexec.c
++   src/cpuexec.h
++   src/cpuint.c
++   src/cpuint.h
++   src/cpuintrf.c
++   src/cpuintrf.h
++   src/datafile.c
++   src/datafile.h
++   src/drawgfx.c
++   src/drawgfx.h
++   src/driver.h
++   src/fileio.c
++   src/fileio.h
++   src/harddisk.c
++   src/harddisk.h
++   src/hash.c
++   src/hash.h
++   src/hiscore.c
++   src/hiscore.h
++   src/info.c
++   src/info.h
++   src/inptport.c
++   src/inptport.h
++   src/input.c
++   src/input.h
++   src/machine/4094.c
++   src/machine/4094.h
++   src/machine/6522via.c
++   src/machine/6522via.h
++   src/machine/6530riot.c
++   src/machine/6530riot.h
++   src/machine/6532riot.c
++   src/machine/6532riot.h
++   src/machine/6821pia.c
++   src/machine/6821pia.h
++   src/machine/8255ppi.c
++   src/machine/8255ppi.h
++   src/machine/eeprom.c
++   src/machine/eeprom.h
++   src/machine/i8155.c
++   src/machine/i8155.h
++   src/machine/mathbox.c
++   src/machine/mathbox.h
++   src/machine/pic8259.c
++   src/machine/pic8259.h
++   src/machine/ticket.c
++   src/machine/ticket.h
++   src/machine/z80fmly.c
++   src/machine/z80fmly.h
++   src/mame.c
++   src/mame.h
++   src/mamedbg.c
++   src/mamedbg.h
++   src/md5.c
++   src/md5.h
++   src/memory.c
++   src/memory.h
++   src/osdepend.h
++   src/palette.c
++   src/palette.h
++   src/pinmame.h
++   src/png.c
++   src/png.h
++   src/profiler.c
++   src/profiler.h
++   src/sha1.c
++   src/sha1.h
++   src/sndintrf.c
++   src/sndintrf.h
++   src/sound/262intf.c
++   src/sound/262intf.h
++   src/sound/2151intf.c
++   src/sound/2151intf.h
++   src/sound/2203intf.c
++   src/sound/2203intf.h
++   src/sound/3812intf.c
++   src/sound/3812intf.h
++   src/sound/5110intf.c
++   src/sound/5110intf.h
++   src/sound/5220intf.c
++   src/sound/5220intf.h
++   src/sound/adpcm.c
++   src/sound/adpcm.h
++   src/sound/astrocde.c
++   src/sound/astrocde.h
++   src/sound/ay8910.c
++   src/sound/ay8910.h
++   src/sound/bsmt2000.c
++   src/sound/bsmt2000.h
++   src/sound/dac.c
++   src/sound/dac.h
++   src/sound/discrete.c
++   src/sound/discrete.h
++   src/sound/filter.c
++   src/sound/filter.h
++   src/sound/fm.c
++   src/sound/fm.h
++   src/sound/fmopl.c
++   src/sound/fmopl.h
++   src/sound/hc55516.c
++   src/sound/hc55516.h
++   src/sound/m114s.c
++   src/sound/m114s.h
++   src/sound/mc3417.c
++   src/sound/mc3417.h
++   src/sound/mea8000.c
++   src/sound/mea8000.h
++   src/sound/mixer.c
++   src/sound/mixer.h
++   src/sound/msm5205.c
++   src/sound/msm5205.h
++   src/sound/qsound.c
++   src/sound/qsound.h
++   src/sound/s14001a.c
++   src/sound/s14001a.h
++   src/sound/saa1099.c
++   src/sound/saa1099.h
++   src/sound/samples.c
++   src/sound/samples.h
++   src/sound/sn76477.c
++   src/sound/sn76477.h
++   src/sound/sn76496.c
++   src/sound/sn76496.h
++   src/sound/sp0250.c
++   src/sound/sp0250.h
++   src/sound/sp0256.c
++   src/sound/sp0256.h
++   src/sound/streams.c
++   src/sound/streams.h
++   src/sound/tms320av120.c
++   src/sound/tms320av120.h
++   src/sound/tms5110.c
++   src/sound/tms5110.h
++   src/sound/tms5220.c
++   src/sound/tms5220.h
++   src/sound/votrax.c
++   src/sound/votrax.h
++   src/sound/ymdeltat.c
++   src/sound/ymdeltat.h
++   src/sound/ymf262.c
++   src/sound/ymf262.h
++   src/state.c
++   src/state.h
++   src/tilemap.c
++   src/tilemap.h
++   src/timer.c
++   src/timer.h
++   src/ui_text.c
++   src/ui_text.h
++   src/unzip.c
++   src/unzip.h
++   src/usrintrf.c
++   src/usrintrf.h
++   src/version.c
++   src/vidhrdw/crtc6845.c
++   src/vidhrdw/crtc6845.h
++   src/vidhrdw/generic.c
++   src/vidhrdw/generic.h
++   src/vidhrdw/tms9928a.c
++   src/vidhrdw/tms9928a.h
++   src/window.c
++   src/window.h
++   src/wpc/allied.c
++   src/wpc/alvg.c
++   src/wpc/alvg.h
++   src/wpc/alvgdmd.c
++   src/wpc/alvgdmd.h
++   src/wpc/alvggames.c
++   src/wpc/alvgs.c
++   src/wpc/alvgs.h
++   src/wpc/atari.c
++   src/wpc/atari.h
++   src/wpc/atarigames.c
++   src/wpc/atarisnd.c
++   src/wpc/barni.c
++   src/wpc/bingo.c
++   src/wpc/boomerang.c
++   src/wpc/bowarrow.c
++   src/wpc/bowlgames.c
++   src/wpc/bulb.c
++   src/wpc/bulb.h
++   src/wpc/by35.c
++   src/wpc/by35.h
++   src/wpc/by35games.c
++   src/wpc/by35snd.c
++   src/wpc/by35snd.h
++   src/wpc/by6803.c
++   src/wpc/by6803.h
++   src/wpc/by6803games.c
++   src/wpc/by68701.c
++   src/wpc/byvidgames.c
++   src/wpc/byvidpin.c
++   src/wpc/byvidpin.h
++   src/wpc/capcom.c
++   src/wpc/capcom.h
++   src/wpc/capcoms.c
++   src/wpc/capcoms.h
++   src/wpc/capgames.c
++   src/wpc/core.c
++   src/wpc/core.h
++   src/wpc/dedmd.c
++   src/wpc/dedmd.h
++   src/wpc/degames.c
++   src/wpc/desound.c
++   src/wpc/desound.h
++   src/wpc/driver.c
++   src/wpc/efo.c
++   src/wpc/efosnd.c
++   src/wpc/flicker.c
++   src/wpc/gen.h
++   src/wpc/gp.c
++   src/wpc/gp.h
++   src/wpc/gpgames.c
++   src/wpc/gpsnd.c
++   src/wpc/gpsnd.h
++   src/wpc/gts1.c
++   src/wpc/gts1.h
++   src/wpc/gts1games.c
++   src/wpc/gts3.c
++   src/wpc/gts3.h
++   src/wpc/gts3games.c
++   src/wpc/gts80.c
++   src/wpc/gts80.h
++   src/wpc/gts80games.c
++   src/wpc/gts80s.c
++   src/wpc/gts80s.h
++   src/wpc/hnkgames.c
++   src/wpc/hnks.c
++   src/wpc/hnks.h
++   src/wpc/icecoldbeer.c
++   src/wpc/idsa.c
++   src/wpc/inder.c
++   src/wpc/inder.h
++   src/wpc/indergames.c
++   src/wpc/inderp.c
++   src/wpc/jeutel.c
++   src/wpc/joctronic.c
++   src/wpc/jp.c
++   src/wpc/jp.h
++   src/wpc/jpgames.c
++   src/wpc/jvh.c
++   src/wpc/kissproto.c
++   src/wpc/lancelot.c
++   src/wpc/ltd.c
++   src/wpc/ltd.h
++   src/wpc/ltdgames.c
++   src/wpc/luckydraw.c
++   src/wpc/mac.c
++   src/wpc/mech.c
++   src/wpc/mech.h
++   src/wpc/mephisto.c
++   src/wpc/micropin.c
++   src/wpc/mrgame.c
++   src/wpc/mrgame.h
++   src/wpc/mrgamegames.c
++   src/wpc/nsm.c
++   src/wpc/nuova.c
++   src/wpc/peyper.c
++   src/wpc/peyper.h
++   src/wpc/peypergames.c
++   src/wpc/play.c
++   src/wpc/play.h
++   src/wpc/playgames.c
++   src/wpc/playsnd.c
++   src/wpc/regama.c
++   src/wpc/rotation.c
++   src/wpc/rowamet.c
++   src/wpc/s3games.c
++   src/wpc/s4.c
++   src/wpc/s4.h
++   src/wpc/s4games.c
++   src/wpc/s6.c
++   src/wpc/s6.h
++   src/wpc/s6games.c
++   src/wpc/s7.c
++   src/wpc/s7.h
++   src/wpc/s7games.c
++   src/wpc/s11.c
++   src/wpc/s11.h
++   src/wpc/s11games.c
++   src/wpc/se.c
++   src/wpc/se.h
++   src/wpc/segames.c
++   src/wpc/sim.c
++   src/wpc/sim.h
++   src/wpc/sims/wpc/full/sttng.c
++   src/wpc/sims/wpc/full/fh.c
++   src/wpc/sims/wpc/full/jd.c
++   src/wpc/sims/wpc/full/bop.c
++   src/wpc/sims/wpc/full/ft.c
++   src/wpc/sims/wpc/full/gw.c
++   src/wpc/sims/wpc/full/afm.c
++   src/wpc/sims/wpc/full/tz.c
++   src/wpc/sims/wpc/full/taf.c
++   src/wpc/sims/wpc/full/pz.c
++   src/wpc/sims/wpc/full/t2.c
++   src/wpc/sims/wpc/full/ngg.c
++   src/wpc/sims/wpc/full/dd_wpc.c
++   src/wpc/sims/wpc/full/cftbl.c
++   src/wpc/sims/wpc/full/mm.c
++   src/wpc/sims/wpc/full/br.c
++   src/wpc/sims/wpc/full/wcs.c
++   src/wpc/sims/wpc/full/hd.c
++   src/wpc/sims/wpc/full/drac.c
++   src/wpc/sims/wpc/full/ss.c
++   src/wpc/sims/wpc/full/ww.c
++   src/wpc/sims/wpc/full/ij.c
++   src/wpc/sims/wpc/full/tom.c
++   src/wpc/sims/wpc/full/rs.c
++   src/wpc/sims/wpc/full/hurr.c
++   src/wpc/sims/wpc/full/gi.c
++   src/wpc/sims/wpc/full/dm.c
++   src/wpc/sims/wpc/prelim/cp.c
++   src/wpc/sims/wpc/prelim/ts.c
++   src/wpc/sims/wpc/prelim/pop.c
++   src/wpc/sims/wpc/prelim/wd.c
++   src/wpc/sims/wpc/prelim/jm.c
++   src/wpc/sims/wpc/prelim/i500.c
++   src/wpc/sims/wpc/full/nbaf.c
++   src/wpc/sims/wpc/prelim/corv.c
++   src/wpc/sims/wpc/prelim/fs.c
++   src/wpc/sims/wpc/prelim/sc.c
++   src/wpc/sims/wpc/prelim/mb.c
++   src/wpc/sims/wpc/prelim/totan.c
++   src/wpc/sims/wpc/prelim/congo.c
++   src/wpc/sims/wpc/prelim/nf.c
++   src/wpc/sims/wpc/prelim/jb.c
++   src/wpc/sims/wpc/prelim/cv.c
++   src/wpc/sims/wpc/prelim/dw.c
++   src/wpc/sims/wpc/prelim/dh.c
++   src/wpc/sims/wpc/prelim/cc.c
++   src/wpc/sims/wpc/prelim/jy.c
++   src/wpc/sims/se/prelim/monopoly.c
++   src/wpc/sims/se/prelim/elvis.c
++   src/wpc/sims/se/prelim/harley.c
++   src/wpc/sims/s11/full/dd.c
++   src/wpc/sims/s11/full/milln.c
++   src/wpc/sims/s11/prelim/eatpm.c
++   src/wpc/sims/s7/full/bk.c
++   src/wpc/sims/s7/full/tmfnt.c
++   src/wpc/slalom.c
++   src/wpc/sleic.c
++   src/wpc/sleic.h
++   src/wpc/sleicgames.c
++   src/wpc/snd_cmd.c
++   src/wpc/snd_cmd.h
++   src/wpc/sndbrd.c
++   src/wpc/sndbrd.h
++   src/wpc/spectra.c
++   src/wpc/spinb.c
++   src/wpc/spinb.h
++   src/wpc/spinbgames.c
++   src/wpc/spiritof76.c
++   src/wpc/stargame.c
++   src/wpc/stgames.c
++   src/wpc/stsnd.c
++   src/wpc/stsnd.h
++   src/wpc/tabart.c
++   src/wpc/taito.c
++   src/wpc/taito.h
++   src/wpc/taitogames.c
++   src/wpc/taitos.c
++   src/wpc/taitos.h
++   src/wpc/techno.c
++   src/wpc/vd.c
++   src/wpc/vpintf.c
++   src/wpc/vpintf.h
++   src/wpc/wico.c
++   src/wpc/wmssnd.c
++   src/wpc/wmssnd.h
++   src/wpc/wpc.c
++   src/wpc/wpc.h
++   src/wpc/wpcgames.c
++   src/wpc/wpcsam.c
++   src/wpc/wpcsam.h
++   src/wpc/zac.c
++   src/wpc/zac.h
++   src/wpc/zacgames.c
++   src/wpc/zacproto.c
++   src/wpc/zacsnd.c
++   src/wpc/zacsnd.h
++
++   src/libpinmame/video.c
++   src/libpinmame/video.h
++   src/libpinmame/joystick.c
++   src/libpinmame/fileio.c
++   src/libpinmame/misc.c
++   src/libpinmame/misc.h
++   src/libpinmame/libpinmame.cpp
++   src/libpinmame/libpinmame.h
++
++   ext/vgm/vgmwrite.c
++   ext/vgm/vgmwrite.h
++
++   ext/ymfm/ymfm_opm.cpp
++   ext/ymfm/ymfm_opm.h
++
++   ext/zlib/adler32.c
++   ext/zlib/compress.c
++   ext/zlib/crc32.c
++   ext/zlib/deflate.c
++   ext/zlib/gzclose.c
++   ext/zlib/gzlib.c
++   ext/zlib/gzread.c
++   ext/zlib/gzwrite.c
++   ext/zlib/infback.c
++   ext/zlib/inffast.c
++   ext/zlib/inflate.c
++   ext/zlib/inftrees.c
++   ext/zlib/trees.c
++   ext/zlib/uncompr.c
++   ext/zlib/zutil.c
++)
++
++if(PLATFORM STREQUAL "win")
++   list(APPEND PINMAME_SOURCES
++      src/vc/dirent.c
++      src/vc/dirent.h
++      src/vc/unistd.h
++
++      src/windows/jit.c
++      src/windows/jit.h
++      src/windows/jitemit.c
++      src/windows/jitemit.h
++      src/windows/ticker.c
++   )
++elseif(PLATFORM STREQUAL "win-mingw")
++   list(APPEND PINMAME_SOURCES
++      src/vc/dirent.c
++      src/vc/dirent.h
++      src/vc/unistd.h
++
++      src/windows/jit.c
++      src/windows/jit.h
++      src/windows/jitemit.c
++      src/windows/jitemit.h
++      src/windows/ticker.c
++   )
++else()
++   list(APPEND PINMAME_SOURCES
++      src/libpinmame/ticker.c
++   )
++endif()
++   
++set(PINMAME_INCLUDE_DIRS
++   src
++   src/wpc
++   src/cpu/m68000/generated_by_m68kmake
++   src/unix
++   src/unix/sysdep
++)
++
++if(PLATFORM STREQUAL "win" OR PLATFORM STREQUAL "win-mingw")
++   list(APPEND PINMAME_INCLUDE_DIRS
++      src/vc
++      src/windows
++      ext/zlib
++   )
++endif()
++
++if(BUILD_SHARED)
++   add_library(pinmame_shared SHARED ${PINMAME_SOURCES})
++
++   target_include_directories(pinmame_shared PUBLIC ${PINMAME_INCLUDE_DIRS})
++
++   if(PLATFORM STREQUAL "win" OR PLATFORM STREQUAL "win-mingw")
++      target_link_libraries(pinmame_shared PUBLIC winmm)
++   endif()
++
++   if((PLATFORM STREQUAL "win" OR PLATFORM STREQUAL "win-mingw") AND ARCH STREQUAL "x64")
++      set(PINMAME_OUTPUT_NAME "pinmame64")
++   else()
++      set(PINMAME_OUTPUT_NAME "pinmame")
++   endif()
++
++   if(PLATFORM STREQUAL "win-mingw")
++      set_target_properties(pinmame_shared PROPERTIES
++         PREFIX ""
++         IMPORT_PREFIX ""
++         OUTPUT_NAME ${PINMAME_OUTPUT_NAME}
++         VERSION ${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_REV}
++      )
++   else()
++      set_target_properties(pinmame_shared PROPERTIES
++         OUTPUT_NAME ${PINMAME_OUTPUT_NAME}
++         VERSION ${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_REV}
++      )
++   endif()
++
++   install(TARGETS pinmame_shared
++      LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
++   )
++
++   install(FILES src/libpinmame/libpinmame.h DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
++
++   if(PLATFORM STREQUAL "win" OR PLATFORM STREQUAL "win-mingw" OR PLATFORM STREQUAL "macos" OR PLATFORM STREQUAL "linux")
++      add_executable(pinmame_test
++         src/libpinmame/test.cpp
++      )
++      target_link_libraries(pinmame_test PUBLIC pinmame_shared)
++   endif()
++endif()
++
++if(BUILD_STATIC)
++   add_library(pinmame_static STATIC ${PINMAME_SOURCES})
++
++   target_include_directories(pinmame_static PUBLIC ${PINMAME_INCLUDE_DIRS})
++
++   if(PLATFORM STREQUAL "win" OR PLATFORM STREQUAL "win-mingw")
++      set_target_properties(pinmame_static PROPERTIES
++         PREFIX ""
++         OUTPUT_NAME "pinmame_static"
++      )
++   else()
++      set_target_properties(pinmame_static PROPERTIES
++         OUTPUT_NAME "pinmame"
++      )
++   endif()
++
++   install(TARGETS pinmame_static
++      LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
++   )
++
++   install(FILES src/libpinmame/libpinmame.h DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
++
++   if(PLATFORM STREQUAL "win" OR PLATFORM STREQUAL "win-mingw" OR PLATFORM STREQUAL "macos" OR PLATFORM STREQUAL "linux")
++      add_executable(pinmame_test_s
++         src/libpinmame/test.cpp
++      )
++
++      if(PLATFORM STREQUAL "win" OR PLATFORM STREQUAL "win-mingw")
++         target_link_libraries(pinmame_test_s PUBLIC pinmame_static winmm)
++      else()
++         target_link_libraries(pinmame_test_s PUBLIC pinmame_static)
++      endif()
++   endif()
++endif()
+diff --git a/src/cpu/m6809/m6809.c b/src/cpu/m6809/m6809.c
+index 6e60168b..65c77b8e 100644
+--- a/src/cpu/m6809/m6809.c
++++ b/src/cpu/m6809/m6809.c
+@@ -240,9 +240,26 @@ static PAIR ea;         /* effective address */
+ /* public globals */
+ int m6809_ICount=50000;
+ 
++/* libpinmame watchpoint hook (defined in libpinmame.cpp). When the
++ * debugger is detached this is a near-no-op (one load + branch); when a
++ * watchpoint matches it captures regs and blocks the CPU until the host
++ * resumes. The RM/WM wrappers use inline functions instead of statement
++ * expressions for MSVC portability. */
++extern int pinmame_dbg_check_mem(unsigned int addr, int is_write, unsigned int value);
++
++static __inline unsigned int pm_rm_wp(unsigned int addr) {
++	unsigned int v = M6809_RDMEM(addr);
++	pinmame_dbg_check_mem(addr, 0, v);
++	return v;
++}
++static __inline void pm_wm_wp(unsigned int addr, unsigned int v) {
++	M6809_WRMEM(addr, v);
++	pinmame_dbg_check_mem(addr, 1, v);
++}
++
+ /* these are re-defined in m6809.h TO RAM, ROM or functions in cpuintrf.c */
+-#define RM(Addr)		M6809_RDMEM(Addr)
+-#define WM(Addr,Value)	M6809_WRMEM(Addr,Value)
++#define RM(Addr)		pm_rm_wp((unsigned int)(Addr))
++#define WM(Addr,Value)	pm_wm_wp((unsigned int)(Addr), (unsigned int)(Value))
+ #define ROP(Addr)		M6809_RDOP(Addr)
+ #define ROP_ARG(Addr)	M6809_RDOP_ARG(Addr)
+ 
+@@ -689,6 +706,16 @@ int m6809_execute(int cycles)	/* NS 970908 */
+ 		{
+ 			pPPC = pPC;
+ 
++			/* libpinmame event-driven debugger hook. Cheap inline check:
++			 * unattached → returns 0 instantly. Attached + match →
++			 * pinmame_dbg_check_pc captures regs, signals the host, and
++			 * blocks this emulation thread until host calls Continue
++			 * or Step. Fires BEFORE the matched instruction executes,
++			 * so the captured A/B/X/Y/U/S are exactly the inputs to
++			 * that instruction. */
++			extern int pinmame_dbg_check_pc(unsigned int pc);
++			(void)pinmame_dbg_check_pc((unsigned int)PCD);
++
+ 			CALL_MAME_DEBUG;
+ 
+ 			m6809.ireg = ROP(PCD);
+diff --git a/src/libpinmame/libpinmame.cpp b/src/libpinmame/libpinmame.cpp
+index de5716d5..6b9cfe20 100644
+--- a/src/libpinmame/libpinmame.cpp
++++ b/src/libpinmame/libpinmame.cpp
+@@ -7,6 +7,11 @@
+ #include <thread>
+ #include <vector>
+ #include <algorithm>
++#include <mutex>
++#include <condition_variable>
++#include <chrono>
++#include <set>
++#include <map>
+ 
+ #if defined(_WIN32) || defined(_WIN64)
+ #define strcasecmp _stricmp
+@@ -22,6 +27,8 @@ extern "C" {
+ #include "audit.h"
+ #include "mech.h"
+ #include "memory.h"
++#include "cpu/m6809/m6809.h"
++#include "cpuintrf.h"
+ 
+ extern int throttle;
+ extern int autoframeskip;
+@@ -1491,6 +1498,232 @@ PINMAMEAPI int PinmameReadMainCPUByte(const uint32_t address, uint8_t* const p_v
+ 	return 1;
+ }
+ 
++/******************************************************
++ * Debugger: event-driven breakpoints, watchpoints, step
++ *
++ * The m6809 dispatch loop calls pinmame_dbg_check_pc(PCD) before each
++ * instruction. The memory subsystem calls pinmame_dbg_check_mem(addr,
++ * is_write, value) on each access. When a condition fires, the emulation
++ * thread captures registers into g_dbgEvent, signals g_dbgFiredCv, then
++ * blocks on g_dbgResumeCv until the host calls Continue or Step.
++ *
++ * The host thread (e.g. Python) calls PinmameDebugWait, which waits on
++ * g_dbgFiredCv. It then reads regs/memory at leisure and calls Continue
++ * or Step to release the emulation thread.
++ *
++ * Watchpoints are kept in a std::map<addr, flags>; lookups use a hashed
++ * fast-path bitmap (m6809 has a 16-bit address space, 8 KB suffices). The
++ * bitmap is cheap to test in the hot path and the map provides the
++ * read/write flag distinction.
++ ******************************************************/
++
++namespace {
++	std::mutex                  g_dbgMutex;
++	std::condition_variable     g_dbgFiredCv;
++	std::condition_variable     g_dbgResumeCv;
++	bool                        g_dbgAttached    = false;
++	bool                        g_dbgFiredFlag   = false;
++	bool                        g_dbgResumeFlag  = false;
++	bool                        g_dbgStepPending = false;
++	PinmameDebugEvent           g_dbgEvent {};
++	std::set<uint32_t>          g_dbgBreakpoints;
++	/* watchpoint flag bits */
++	enum { WP_READ = 1, WP_WRITE = 2 };
++	std::map<uint32_t, uint8_t> g_dbgWatchpoints;
++
++	/* Fast-path bitmaps for the m6809 64KB address space. One bit per
++	 * 16-bit address: 65536 / 8 = 8192 bytes. The hot path in the CPU
++	 * dispatch loop only reads these arrays; mutation happens under the
++	 * mutex from API setters. */
++	constexpr size_t WP_BITMAP_BYTES = 8192;
++	uint8_t g_dbgWpReadBitmap [WP_BITMAP_BYTES] = {0};
++	uint8_t g_dbgWpWriteBitmap[WP_BITMAP_BYTES] = {0};
++	/* Same idea for breakpoints, drops the set lookup from the hot path */
++	uint8_t g_dbgBpBitmap[WP_BITMAP_BYTES] = {0};
++
++	static inline void bitmap_set(uint8_t* bm, uint32_t addr, bool on) {
++		uint32_t a = addr & 0xFFFFu;
++		uint8_t mask = static_cast<uint8_t>(1u << (a & 7));
++		if (on) bm[a >> 3] |=  mask;
++		else    bm[a >> 3] &= ~mask;
++	}
++	static inline bool bitmap_get(const uint8_t* bm, uint32_t addr) {
++		uint32_t a = addr & 0xFFFFu;
++		return (bm[a >> 3] >> (a & 7)) & 1u;
++	}
++
++	/* Populate the regs portion of g_dbgEvent. Called with mutex held. */
++	void dbg_fill_regs(PinmameMainCPURegs* p) {
++		p->pc = static_cast<uint16_t>(cpunum_get_reg(0, M6809_PC));
++		p->s  = static_cast<uint16_t>(cpunum_get_reg(0, M6809_S));
++		p->u  = static_cast<uint16_t>(cpunum_get_reg(0, M6809_U));
++		p->x  = static_cast<uint16_t>(cpunum_get_reg(0, M6809_X));
++		p->y  = static_cast<uint16_t>(cpunum_get_reg(0, M6809_Y));
++		p->a  = static_cast<uint8_t>(cpunum_get_reg(0, M6809_A) & 0xFF);
++		p->b  = static_cast<uint8_t>(cpunum_get_reg(0, M6809_B) & 0xFF);
++		p->cc = static_cast<uint8_t>(cpunum_get_reg(0, M6809_CC) & 0xFF);
++		p->dp = static_cast<uint8_t>(cpunum_get_reg(0, M6809_DP) & 0xFF);
++	}
++
++	/* Common break path: fire event to host, then block until resumed.
++	 * Caller passes reason and any watchpoint fields; we fill regs. */
++	void dbg_fire_and_wait(uint32_t reason, uint32_t watch_addr,
++	                       uint8_t is_write, uint8_t value) {
++		std::unique_lock<std::mutex> lk(g_dbgMutex);
++		if (!g_dbgAttached) return;
++		PinmameDebugEvent ev {};
++		ev.reason         = reason;
++		ev.watch_addr     = watch_addr;
++		ev.watch_is_write = is_write;
++		ev.watch_value    = value;
++		dbg_fill_regs(&ev.regs);
++		ev.hit_pc = ev.regs.pc;
++		g_dbgEvent       = ev;
++		g_dbgFiredFlag   = true;
++		g_dbgStepPending = false;
++		g_dbgFiredCv.notify_all();
++		g_dbgResumeCv.wait(lk, []{ return g_dbgResumeFlag || !g_dbgAttached; });
++		g_dbgResumeFlag = false;
++	}
++} /* namespace */
++
++/* Hot-path predicates called from m6809.c. Inline-safe: just bitmap reads
++ * plus an attached/step flag check. No locking — these are advisory; the
++ * heavy work happens inside dbg_fire_and_wait, which acquires the mutex. */
++extern "C" int pinmame_dbg_check_pc(unsigned int pc) {
++	if (!g_dbgAttached) return 0;
++	if (g_dbgStepPending) {
++		dbg_fire_and_wait(PINMAME_DBG_REASON_STEP, 0, 0, 0);
++		return 1;
++	}
++	if (bitmap_get(g_dbgBpBitmap, pc)) {
++		dbg_fire_and_wait(PINMAME_DBG_REASON_BREAKPOINT, 0, 0, 0);
++		return 1;
++	}
++	return 0;
++}
++
++extern "C" int pinmame_dbg_check_mem(unsigned int addr, int is_write,
++                                     unsigned int value) {
++	if (!g_dbgAttached) return 0;
++	const uint8_t* bm = is_write ? g_dbgWpWriteBitmap : g_dbgWpReadBitmap;
++	if (!bitmap_get(bm, addr)) return 0;
++	dbg_fire_and_wait(PINMAME_DBG_REASON_WATCHPOINT, addr,
++	                  static_cast<uint8_t>(is_write ? 1 : 0),
++	                  static_cast<uint8_t>(value & 0xFFu));
++	return 1;
++}
++
++PINMAMEAPI void PinmameDebugAttach(void) {
++	std::lock_guard<std::mutex> lk(g_dbgMutex);
++	g_dbgAttached    = true;
++	g_dbgFiredFlag   = false;
++	g_dbgResumeFlag  = false;
++	g_dbgStepPending = false;
++}
++
++PINMAMEAPI void PinmameDebugDetach(void) {
++	std::lock_guard<std::mutex> lk(g_dbgMutex);
++	g_dbgAttached    = false;
++	g_dbgStepPending = false;
++	g_dbgBreakpoints.clear();
++	g_dbgWatchpoints.clear();
++	std::fill(std::begin(g_dbgBpBitmap),      std::end(g_dbgBpBitmap),      0);
++	std::fill(std::begin(g_dbgWpReadBitmap),  std::end(g_dbgWpReadBitmap),  0);
++	std::fill(std::begin(g_dbgWpWriteBitmap), std::end(g_dbgWpWriteBitmap), 0);
++	/* Unblock any in-flight emulation break and any pending Wait. */
++	g_dbgResumeFlag = true;
++	g_dbgFiredFlag  = true;
++	g_dbgEvent      = {};
++	g_dbgEvent.reason = PINMAME_DBG_REASON_DETACHED;
++	g_dbgResumeCv.notify_all();
++	g_dbgFiredCv.notify_all();
++}
++
++PINMAMEAPI int PinmameDebugIsAttached(void) {
++	return g_dbgAttached ? 1 : 0;
++}
++
++PINMAMEAPI void PinmameDebugAddBreakpoint(uint32_t pc) {
++	std::lock_guard<std::mutex> lk(g_dbgMutex);
++	g_dbgBreakpoints.insert(pc & 0xFFFFu);
++	bitmap_set(g_dbgBpBitmap, pc, true);
++}
++
++PINMAMEAPI void PinmameDebugRemoveBreakpoint(uint32_t pc) {
++	std::lock_guard<std::mutex> lk(g_dbgMutex);
++	g_dbgBreakpoints.erase(pc & 0xFFFFu);
++	bitmap_set(g_dbgBpBitmap, pc, false);
++}
++
++PINMAMEAPI void PinmameDebugClearBreakpoints(void) {
++	std::lock_guard<std::mutex> lk(g_dbgMutex);
++	g_dbgBreakpoints.clear();
++	std::fill(std::begin(g_dbgBpBitmap), std::end(g_dbgBpBitmap), 0);
++}
++
++PINMAMEAPI void PinmameDebugAddWatchpoint(uint32_t addr, int on_read, int on_write) {
++	std::lock_guard<std::mutex> lk(g_dbgMutex);
++	uint8_t flags = 0;
++	if (on_read)  flags |= WP_READ;
++	if (on_write) flags |= WP_WRITE;
++	if (!flags) {
++		g_dbgWatchpoints.erase(addr & 0xFFFFu);
++		bitmap_set(g_dbgWpReadBitmap,  addr, false);
++		bitmap_set(g_dbgWpWriteBitmap, addr, false);
++		return;
++	}
++	g_dbgWatchpoints[addr & 0xFFFFu] = flags;
++	bitmap_set(g_dbgWpReadBitmap,  addr, (flags & WP_READ)  != 0);
++	bitmap_set(g_dbgWpWriteBitmap, addr, (flags & WP_WRITE) != 0);
++}
++
++PINMAMEAPI void PinmameDebugRemoveWatchpoint(uint32_t addr) {
++	std::lock_guard<std::mutex> lk(g_dbgMutex);
++	g_dbgWatchpoints.erase(addr & 0xFFFFu);
++	bitmap_set(g_dbgWpReadBitmap,  addr, false);
++	bitmap_set(g_dbgWpWriteBitmap, addr, false);
++}
++
++PINMAMEAPI void PinmameDebugClearWatchpoints(void) {
++	std::lock_guard<std::mutex> lk(g_dbgMutex);
++	g_dbgWatchpoints.clear();
++	std::fill(std::begin(g_dbgWpReadBitmap),  std::end(g_dbgWpReadBitmap),  0);
++	std::fill(std::begin(g_dbgWpWriteBitmap), std::end(g_dbgWpWriteBitmap), 0);
++}
++
++PINMAMEAPI int PinmameDebugWait(uint32_t timeout_ms,
++                                PinmameDebugEvent* const p_event) {
++	if (p_event == nullptr) return 0;
++	std::unique_lock<std::mutex> lk(g_dbgMutex);
++	auto cond = []{ return g_dbgFiredFlag; };
++	bool ok;
++	if (timeout_ms == 0) {
++		g_dbgFiredCv.wait(lk, cond);
++		ok = true;
++	} else {
++		ok = g_dbgFiredCv.wait_for(lk, std::chrono::milliseconds(timeout_ms), cond);
++	}
++	if (!ok) return 0;
++	*p_event = g_dbgEvent;
++	g_dbgFiredFlag = false;
++	return 1;
++}
++
++PINMAMEAPI void PinmameDebugContinue(void) {
++	std::lock_guard<std::mutex> lk(g_dbgMutex);
++	g_dbgStepPending = false;
++	g_dbgResumeFlag  = true;
++	g_dbgResumeCv.notify_all();
++}
++
++PINMAMEAPI void PinmameDebugStep(void) {
++	std::lock_guard<std::mutex> lk(g_dbgMutex);
++	g_dbgStepPending = true;
++	g_dbgResumeFlag  = true;
++	g_dbgResumeCv.notify_all();
++}
++
+ /******************************************************
+  * PinmameGetRawMemoryRegion
+  ******************************************************/
+diff --git a/src/libpinmame/libpinmame.h b/src/libpinmame/libpinmame.h
+index 31e9f5a8..85a261bd 100644
+--- a/src/libpinmame/libpinmame.h
++++ b/src/libpinmame/libpinmame.h
+@@ -395,6 +395,23 @@ typedef struct {
+ 	uint8_t currStat;
+ } PinmameNVRAMState;
+ 
++/* Main-CPU register snapshot. Filled by PinmameGetMainCPURegs.
++ *
++ * Values are reads of the 6809's register file at the moment of the call
++ * (M6809_PC, M6809_S, ...). PC is the address of the *current* instruction
++ * — i.e. the one that has just begun executing — not the next one. */
++typedef struct {
++	uint16_t pc;
++	uint16_t s;
++	uint16_t u;
++	uint16_t x;
++	uint16_t y;
++	uint8_t  a;
++	uint8_t  b;
++	uint8_t  cc;
++	uint8_t  dp;
++} PinmameMainCPURegs;
++
+ typedef struct {
+ 	const char* name;
+ 	PINMAME_KEYCODE code;
+@@ -484,6 +501,71 @@ PINMAMEAPI int PinmameGetMaxNVRAM();
+ PINMAMEAPI int PinmameGetNVRAM(PinmameNVRAMState* const p_nvramStates);
+ PINMAMEAPI int PinmameGetChangedNVRAM(PinmameNVRAMState* const p_nvramStates);
+ PINMAMEAPI int PinmameReadMainCPUByte(uint32_t address, uint8_t* const p_value);
++
++/* --------------------------------------------------------------------------
++ * Debugger API
++ *
++ * Event-driven breakpoint/watchpoint/step facility for the main CPU. The
++ * emulation thread blocks the moment a break condition fires; Python (or
++ * any host) wakes up via PinmameDebugWait, inspects state, then resumes
++ * the emulation via PinmameDebugContinue or PinmameDebugStep.
++ *
++ * Lifecycle:
++ *   1. PinmameDebugAttach()         -- enables the hook
++ *   2. PinmameDebugAddBreakpoint(pc) -- (and/or watchpoints)
++ *   3. PinmameDebugWait(...)         -- blocks; emulation runs free
++ *   4. (event arrives) inspect regs / memory
++ *   5. PinmameDebugContinue() or PinmameDebugStep()
++ *   6. loop back to (3) until done
++ *   7. PinmameDebugDetach()         -- removes the hook and unblocks any
++ *                                       in-flight emulation break
++ *
++ * Thread safety: PinmameDebugWait is intended for a host thread different
++ * from the emulation thread (typical libpinmame use: Python main thread
++ * waits, libpinmame's game-thread emulates). Continue/Step may be called
++ * from any thread; they only signal a condition variable. -------------- */
++
++typedef enum {
++	PINMAME_DBG_REASON_NONE       = 0,
++	PINMAME_DBG_REASON_BREAKPOINT = 1,
++	PINMAME_DBG_REASON_WATCHPOINT = 2,
++	PINMAME_DBG_REASON_STEP       = 3,
++	PINMAME_DBG_REASON_DETACHED   = 4
++} PINMAME_DBG_REASON;
++
++typedef struct {
++	uint32_t reason;          /* PINMAME_DBG_REASON */
++	PinmameMainCPURegs regs;  /* snapshot at the moment of break */
++	uint32_t hit_pc;          /* PC at break (same as regs.pc, for clarity) */
++	uint32_t watch_addr;      /* watchpoint hit address (else 0) */
++	uint8_t  watch_is_write;  /* 1 if write triggered, 0 if read */
++	uint8_t  watch_value;     /* byte value at the access (post-write/pre-read) */
++	uint8_t  _pad[2];
++} PinmameDebugEvent;
++
++PINMAMEAPI void PinmameDebugAttach(void);
++PINMAMEAPI void PinmameDebugDetach(void);
++PINMAMEAPI int  PinmameDebugIsAttached(void);
++
++PINMAMEAPI void PinmameDebugAddBreakpoint(uint32_t pc);
++PINMAMEAPI void PinmameDebugRemoveBreakpoint(uint32_t pc);
++PINMAMEAPI void PinmameDebugClearBreakpoints(void);
++
++/* Watchpoints fire on memory accesses to the given 16-bit CPU address.
++ * on_read / on_write are independent flags; pass 0/1. */
++PINMAMEAPI void PinmameDebugAddWatchpoint(uint32_t addr, int on_read, int on_write);
++PINMAMEAPI void PinmameDebugRemoveWatchpoint(uint32_t addr);
++PINMAMEAPI void PinmameDebugClearWatchpoints(void);
++
++/* Block until a debug event fires or timeout_ms expires.
++ * timeout_ms == 0 means wait forever.
++ * Returns 1 if p_event was filled, 0 on timeout. */
++PINMAMEAPI int PinmameDebugWait(uint32_t timeout_ms, PinmameDebugEvent* const p_event);
++
++/* Resume execution. Continue runs until the next bp/wp; Step executes one
++ * instruction then breaks again (with reason=PINMAME_DBG_REASON_STEP). */
++PINMAMEAPI void PinmameDebugContinue(void);
++PINMAMEAPI void PinmameDebugStep(void);
+ PINMAMEAPI const uint8_t* PinmameGetRawMemoryRegion(const int region);
+ PINMAMEAPI size_t PinmameGetRawMemoryRegionLength(const int region);
+ PINMAMEAPI void PinmameSetUserData(void* const p_userData);
+diff --git a/src/win32com/Alias.cpp b/src/win32com/Alias.cpp
+index da731ff1..7cf56f7b 100644
+--- a/src/win32com/Alias.cpp
++++ b/src/win32com/Alias.cpp
+@@ -24,6 +24,125 @@ extern "C" {
+ // do not remove, the following array is being filled by vpinmame.yml via VPMAlias.txt
+ static const struct tAliasTable { const char* alias; const char* real; } aliasTable[] = {
+ /*VPMALIAS*/
++  { "acdcluci", "acd_170hc" },
++  { "rockyle", "ali" },
++  { "thething", "ali" },
++  { "star_tours", "alpok_f6" },
++  { "LogansRun", "Arena" },
++  { "blkou_hf", "blkou_l1" },
++  { "bnzai_p1", "bnzai_pa" },
++  { "goldfinger", "bond" },
++  { "batmn", "btmn_101" },
++  { "bttf", "bttf_a20" },
++  { "cc_13D", "cc_13" },
++  { "chkpnt", "ckpt_a17" },
++  { "congo_11s10", "congo_20s10k" },
++  { "blaze", "csmic_l1" },
++  { "elektraapredator", "elektraa" },
++  { "elvisjt", "elvis" },
++  { "grease", "elvis" },
++  { "greasem", "elvis" },
++  { "eshak_l1", "esha_la1" },
++  { "eshak_l3", "esha_la3" },
++  { "eshak_f1", "esha_pr4" },
++  { "freefallp", "freefall" },
++  { "geniecbbb", "genie" },
++  { "gnr", "gnr_300" },
++  { "godzillabwpup", "godzilla" },
++  { "gs_l3", "gs_la3" },
++  { "gs_l4", "gs_lu4" },
++  { "FF", "gw_l5" },
++  { "harley", "harl_a10" },
++  { "penthouse", "hglbtrtb" },
++  { "safeaus", "HighHand_1973" },
++  { "hook", "hook_408" },
++  { "Raya", "hothand" },
++  { "beetljui", "ironmaid" },
++  { "jplstwld", "jplstw22" },
++  { "jurpark", "jupk_513" },
++  { "missworld", "kissc" },
++  { "kpv106", "kpb105" },
++  { "lah", "lah_112" },
++  { "lostwrld_gunship", "lostwrld" },
++  { "lw3", "lw3_208" },
++  { "lwar", "lwar_a83" },
++  { "maverick", "mav_401" },
++  { "mnfb", "mnfb_c27" },
++  { "tennmnfb_c27", "mnfb_c27" },
++  { "deathproof", "mousn_l4" },
++  { "mousn_lx", "mousn_l4" },
++  { "mtl_180hcm", "mtl_180hc" },
++  { "nf_10", "nf_10f" },
++  { "nfl_ari", "nfl" },
++  { "nfl_atl", "nfl" },
++  { "nfl_bal", "nfl" },
++  { "nfl_buf", "nfl" },
++  { "nfl_car", "nfl" },
++  { "nfl_chi", "nfl" },
++  { "nfl_cin", "nfl" },
++  { "nfl_cle", "nfl" },
++  { "nfl_dal", "nfl" },
++  { "nfl_den", "nfl" },
++  { "nfl_det", "nfl" },
++  { "nfl_gre", "nfl" },
++  { "nfl_hou", "nfl" },
++  { "nfl_ind", "nfl" },
++  { "nfl_jac", "nfl" },
++  { "nfl_kan", "nfl" },
++  { "nfl_lac", "nfl" },
++  { "nfl_lar", "nfl" },
++  { "nfl_mia", "nfl" },
++  { "nfl_min", "nfl" },
++  { "nfl_nyg", "nfl" },
++  { "nfl_nyj", "nfl" },
++  { "nfl_pat", "nfl" },
++  { "nfl_phi", "nfl" },
++  { "nfl_pit", "nfl" },
++  { "nfl_rai", "nfl" },
++  { "nfl_sai", "nfl" },
++  { "nfl_san", "nfl" },
++  { "nfl_sea", "nfl" },
++  { "nfl_tam", "nfl" },
++  { "nfl_ten", "nfl" },
++  { "nfl_was", "nfl" },
++  { "Encanto", "ngndshkr" },
++  { "incredibles", "panther7" },
++  { "play", "play_a24" },
++  { "christmasp", "playboy" },
++  { "sexygirl", "playboyb" },
++  { "playboystentacle", "playboys" },
++  { "poto", "poto_a32" },
++  { "rab", "rab_130" },
++  { "robo", "robo_a34" },
++  { "ffdp", "rock" },
++  { "rs_lx2p3", "rs_pa2" },
++  { "sc_18n", "sc_18n11" },
++  { "sc_18", "sc_18s11" },
++  { "Class1984", "seawitch" },
++  { "simp", "simp_a27" },
++  { "LABYRINTH", "skatebll" },
++  { "Onward", "skatebll" },
++  { "southpk", "sprk_103" },
++  { "ssvc", "ssvc_a26" },
++  { "ratfink", "startreb" },
++  { "startreb4", "startreb" },
++  { "stestc", "stest" },
++  { "stwarde", "stwr_103" },
++  { "swrds_l2FO", "swrds_l2" },
++  { "swtril", "swtril43" },
++  { "T1D_123_riccione", "T1D_123" },
++  { "tftc", "tftc_303" },
++  { "tftc_400c", "tftc_400" },
++  { "tmach", "tmac_a24" },
++  { "tmnt", "tmnt_104" },
++  { "tommy", "tomy_400" },
++  { "torpe", "torp_e21" },
++  { "trek", "trek_201" },
++  { "truckstp", "trucksp2" },
++  { "twd_156ld", "twd_156h" },
++  { "madmax", "twst_405" },
++  { "twister", "twst_405" },
++  { "wwfrumb", "wwfr_103" },
+ 	  { NULL, NULL }
+ };
+ 
+-- 
+2.49.0
+

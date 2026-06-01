@@ -1,0 +1,14 @@
+{
+  "name": "rom-workbench",
+  "description": "WPC pinball ROM reverse-engineering and modding toolkit for Claude Code",
+  "owner": {
+    "name": "Techbert08"
+  },
+  "plugins": [
+    {
+      "name": "rom-workbench",
+      "source": ".",
+      "description": "All WPC skills bundled: wpc-investigate, wpc-debug, build-wpc-rom, record-pinball, synthetic-recording, pinball-setup"
+    }
+  ]
+}
