@@ -115,7 +115,7 @@ Per-game registration:
 2. If `-Table` is supplied, copies the `.vpx` into `%VPINBALL_DIR%\Tables\` and records the path in `%LOCALAPPDATA%\record-pinball\config.json` under `tables.<rom>`.
 3. Otherwise prompts: open VPUniverse search / paste a path / skip.
 
-After this, `record.py -Rom <name>` picks up the table automatically.
+After this, `record.py --rom <name>` picks up the table automatically.
 
 ## Acquiring game files (ROM zip + VPX table)
 
@@ -183,7 +183,7 @@ To launch `setup-pinball.py` the first time you need **either** uv **or** any
 Python 3.9+ (`python3 setup-pinball.py` will then install uv for you). After that:
 
 ### Windows
-- **PowerShell 7+** (`pwsh`) — used by `record.ps1` / `add-rom.ps1`.
+- **PowerShell 7+** (`pwsh`) — used by `add-rom.ps1` (the Windows recorder is now `record.py`).
 - **One Administrator PowerShell** for the one-time `regsvr32 VPinMAME.dll` step.
 
 ### macOS

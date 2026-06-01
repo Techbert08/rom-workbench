@@ -17,7 +17,7 @@ A ROM zip that changes the WPC checksum word ($FFEE) will trigger a
 factory reset on first boot because the existing NVRAM stored a checksum
 from the previous ROM version. Some games then sit on a "FACTORY RESET —
 PRESS ENTER" prompt waiting for an acknowledgment. --ack-input accepts a
-session.jsonl with the required switch press (recorded via record.ps1
+session.jsonl with the required switch press (recorded via record.py
 against the same ROM); that input is replayed during the warm-up.
 """
 

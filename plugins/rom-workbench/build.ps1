@@ -347,7 +347,7 @@ if ($Deploy) {
         $dest = Join-Path $vpinmame "roms\${romStem}_modded.zip"
         Copy-Item -Path $OutZip -Destination $dest -Force
         Write-Ok "Copied to $dest"
-        Write-Warn2 "To test: record-pinball\record.ps1 -Rom ${romStem}_modded"
+        Write-Warn2 "To test: uv run record-pinball\record.py --rom ${romStem}_modded"
     }
 }
 

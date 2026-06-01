@@ -1,4 +1,4 @@
-# Shared helpers for record-pinball. Dot-sourced by record.ps1 and add-rom.ps1.
+# Shared helpers for record-pinball. Dot-sourced by add-rom.ps1.
 # Write-Step / Write-Ok / Write-Warn2 / Write-Bad, SHA-256, user-env reads, and
 # the config.json read/write under %LOCALAPPDATA%\record-pinball.
 # (The cross-platform installer setup-pinball.py owns downloads + env writes.)

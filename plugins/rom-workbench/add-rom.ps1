@@ -3,7 +3,7 @@
 .SYNOPSIS
     Registers a WPC ROM (and optionally its Visual Pinball table) with the record-pinball
     skill: stages the ROM zip into VPM's roms\ directory and records the .vpx path in
-    config.json so record.ps1 can look it up by ROM name.
+    config.json so record.py can look it up by ROM name.
 
 .DESCRIPTION
     Idempotent. Run once per game you want to record/replay.
@@ -17,7 +17,7 @@
     The VPX table is third-party community content (VPUniverse / VPForums) and is never
     auto-downloaded. Pass -Table to register a path you already have; omit -Table to be
     prompted, or pass -SkipTable to stage the ROM now and register a table later. A table
-    is required before record.ps1 can capture a session.
+    is required before record.py can capture a session.
 
 .PARAMETER RomZip
     Path to a ROM zip (the same shape VPM expects under its roms\ dir).
@@ -30,7 +30,7 @@
     config records the in-Tables location.
 
 .PARAMETER SkipTable
-    Don't prompt for a table; stage the ROM only. record.ps1 needs a table registered
+    Don't prompt for a table; stage the ROM only. record.py needs a table registered
     (re-run add-rom.ps1 -Table <vpx>) before it can record.
 
 .PARAMETER ConfigPath
@@ -141,7 +141,7 @@ elseif ($existing -and -not $Force) {
     $resolvedTable = $existing
 }
 elseif ($SkipTable) {
-    Write-Warn2 "Skipping table registration. record.ps1 -Rom $Rom needs a table — re-run add-rom.ps1 -Rom $Rom -Table <vpx> first."
+    Write-Warn2 "Skipping table registration. uv run record.py --rom $Rom needs a table — re-run add-rom.ps1 -Rom $Rom -Table <vpx> first."
 }
 else {
     Write-Host ""
@@ -192,4 +192,4 @@ if ($resolvedTable) {
     Write-Host "  VPX table:    (none — register one with -Table before recording)" -ForegroundColor Yellow
 }
 Write-Host ""
-Write-Host "Next: record.ps1 -Rom $Rom" -ForegroundColor Yellow
+Write-Host "Next: uv run record.py --rom $Rom" -ForegroundColor Yellow

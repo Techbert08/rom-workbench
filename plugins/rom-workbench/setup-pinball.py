@@ -720,7 +720,7 @@ def install_vpinmame_windows(root: Path, force: bool) -> Path:
     # Deploy the patched VPinMAME64.dll (the VPINMAME_SWITCHLOG recorder).
     patched = BIN_DIR / "VPinMAME64.dll"
     if not patched.exists():
-        warn("bin\\VPinMAME64.dll not found; record.ps1 VpRecord needs it.")
+        warn("bin\\VPinMAME64.dll not found; record.py VpRecord needs it.")
     elif not dll64.exists():
         warn(f"VPinMAME64.dll not installed at {dll64}; cannot deploy patch.")
     else:

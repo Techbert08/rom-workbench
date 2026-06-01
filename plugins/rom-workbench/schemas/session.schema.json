@@ -2,7 +2,7 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://github.com/zachc/congo/record-pinball/session.schema.json",
     "title": "record-pinball session.jsonl record",
-    "description": "Newline-delimited JSON records emitted by record.ps1 (Windows) / record.sh (macOS). The first record MUST be of kind 'meta'. All other records are timestamped events. Time `t` is the emulation-clock timestamp of each switch edge, as logged by the patched VPinMAME DLL.",
+    "description": "Newline-delimited JSON records emitted by record.py. The first record MUST be of kind 'meta'. All other records are timestamped events. Time `t` is the emulation-clock timestamp of each switch edge, as logged by the patched VPinMAME DLL.",
     "oneOf": [
         {
             "type": "object",

@@ -37,8 +37,8 @@ Assumes you've already run `pinball-setup/setup-pinball.py` and
 (any working directory):
 
 ```powershell
-# Record a session. Looks up the table for -Rom from config.json. Press Ctrl-C to stop.
-& '${CLAUDE_PLUGIN_ROOT}/record.ps1' -Rom congo_21
+# Record a session. Looks up the table for --rom from config.json. Press Ctrl-C to stop.
+uv run '${CLAUDE_PLUGIN_ROOT}/record.py' --rom congo_21
 
 # One-time per ROM zip: produce a freshly-reset NVRAM snapshot so replays
 # don't pay the boot-time factory-reset cost and start from explicit state.
@@ -85,25 +85,27 @@ needed:
 If a script complains "PINMAME_DIR not set" or similar, point at
 `pinball-setup`.
 
-## Recording: what `record.ps1` does
+## Recording: what `record.py` does
 
-```powershell
-& '${CLAUDE_PLUGIN_ROOT}/record.ps1' `
-    [-Rom congo_21] `                      # default: congo_21
-    [-Table '<path-to-vpx>'] `             # default: from config.json
-    [-OutDir '<dir>'] `                    # default: .\sessions\<UTC>
-    [-MaxSeconds 600]                      # safety stop
+`record.py` is one cross-platform recorder (macOS + Windows) — it launches the
+right Visual Pinball binary for the OS and both produce an identical `session.jsonl`.
+
+```bash
+uv run '${CLAUDE_PLUGIN_ROOT}/record.py' \
+    [--rom congo_21] \                     # default: congo_21
+    [--table '<path-to-vpx>'] \            # default: from config.json
+    [--out-dir '<dir>'] \                  # default: ./sessions/<UTC>
+    [--max-sec 600] \                      # safety stop
+    [--config ./config.json]               # config written by add-rom
 ```
 
-Sessions are written to `.\sessions\<UTC>\` relative to the current working directory.
-`record.ps1` is the Windows recorder; `record.sh` is its macOS counterpart, and both
-produce an identical `session.jsonl`.
+Sessions are written to `./sessions/<UTC>/` relative to the current working directory.
 
-Launches Visual Pinball with the full table. The patched `VPinMAME64.dll` (deployed by `setup-pinball.py` from `bin\VPinMAME64.dll`) runs inside VP's process and captures the replayable switch stream via one env var set in the child:
+Launches Visual Pinball with the full table. The patched VPinMAME DLL (`VPinMAME64.dll` on Windows, `libpinmame.dylib` on macOS — deployed by `setup-pinball.py` from `bin/`) runs inside VP's process and captures the replayable switch stream via one env var set in the child:
 
-- `VPINMAME_SWITCHLOG=<session>\switchlog.jsonl` — VP drives the playfield through the COM `Controller.Switch`/`put_Switches` path, which funnels through `vp_putSwitch`; the patched DLL logs every externally-driven switch *edge* there as a JSONL `"switch"` record stamped with the **emulation clock** (`timer_get_time`). When VP closes, `record.ps1` folds these into `session.jsonl` as `kind:"switch"` records (after the meta line). This is what `replay.py`/`replay_host.py` inject via `PinmameSetSwitch` — the same `swMatrix` plane VP drove, so gameplay reproduces faithfully.
+- `VPINMAME_SWITCHLOG=<session>/switchlog.jsonl` — VP drives the playfield through the COM `Controller.Switch`/`put_Switches` path, which funnels through `vp_putSwitch`; the patched DLL logs every externally-driven switch *edge* there as a JSONL `"switch"` record stamped with the **emulation clock** (`timer_get_time`). When VP closes, `record.py` folds these into `session.jsonl` as `kind:"switch"` records (after the meta line). This is what `replay.py`/`replay_host.py` inject via `PinmameSetSwitch` — the same `swMatrix` plane VP drove, so gameplay reproduces faithfully.
 
-**Stop recording** by closing the VP window or hitting Ctrl-C in the recording terminal. `-MaxSeconds` is a safety cap.
+**Stop recording** by closing the VP window or hitting Ctrl-C in the recording terminal. `--max-sec` is a safety cap.
 
 ## NVRAM init: `init_nvram.py`
 
@@ -429,19 +431,17 @@ For a typical mod-validation workflow:
 ```
 ${CLAUDE_PLUGIN_ROOT}/
 ├── SKILL.md                          # this file
-├── record.ps1                        # session capture (PS — launches VP, Windows)
-├── record.sh                         # session capture (bash — launches VPX, macOS)
+├── record.py                        # session capture — launches VP, cross-platform (macOS + Windows)
 ├── init_nvram.py                     # produce a freshly-reset NVRAM snapshot per ROM zip
 ├── replay.py                         # single-sided headless replay (+ --interactive)
 ├── dbg.py                            # thin client for the --interactive debugger socket
 ├── bin/
-│   ├── VPinMAME64.dll                # patched VPinMAME — VPINMAME_SWITCHLOG switch-edge recorder (Windows record.ps1)
-│   ├── libpinmame.dylib              # patched libpinmame — VPINMAME_SWITCHLOG recorder (macOS record.sh) + replay
+│   ├── VPinMAME64.dll                # patched VPinMAME — VPINMAME_SWITCHLOG switch-edge recorder (Windows record.py)
+│   ├── libpinmame.dylib              # patched libpinmame — VPINMAME_SWITCHLOG recorder (macOS record.py) + replay
 │   ├── pinmame64.dll                 # patched libpinmame — used by replay_host.py
 │   └── libpinmame.dll                # canonical-name copy of pinmame64.dll (loader alias)
 ├── lib/
-│   ├── Common.ps1                    # Write-Step/Ok/Warn2, SHA-256, env, archive (record.ps1)
-│   └── SessionSchema.ps1             # RpSessionWriter + meta reader (record.ps1)
+│   └── Common.ps1                    # Write-Step/Ok/Warn2, SHA-256, env, config (add-rom.ps1)
 ├── replay/
 │   ├── replay_host.py                # libpinmame ctypes driver — event-driven; spawns
 │   │                                 #   a worker thread that blocks on PinmameDebugWait.
@@ -456,12 +456,12 @@ ${CLAUDE_PLUGIN_ROOT}/
         └── congo_21.json
 ```
 
-The recorder is split by OS — `record.ps1` (PowerShell) launches Visual
-Pinball on Windows, `record.sh` (bash) launches VPX on macOS — because
-launching the table and monitoring its process is platform-specific (the
-patched-DLL env var, the window/process lifecycle). Both write the same
-`session.jsonl`. The investigation-side wrappers (`replay`, `init_nvram`)
-are Python because they're pure orchestration over `replay_host.py`.
+`record.py` is one cross-platform recorder: it picks the right Visual Pinball
+binary and launch mechanism per OS (Windows `VPinballX64.exe` directly; macOS
+`open -a VPinballX_GL.app`), sets the patched-DLL switch-log env var, monitors
+the process, and folds the captured switch stream into `session.jsonl`. The
+investigation-side wrappers (`replay`, `init_nvram`) are likewise Python,
+orchestrating `replay_host.py`. (Per-game `add-rom` stays platform-native PS/bash.)
 
 ## References
 
