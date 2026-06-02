@@ -8,7 +8,8 @@
     {
       "name": "rom-workbench",
       "source": "./plugins/rom-workbench",
-      "description": "All WPC skills bundled: overview, setup, record, synthetic-record, debug, build"
+      "description": "All WPC skills bundled: overview, setup, record, synthetic-record, debug, build",
+      "category": "development"
     }
   ]
 }

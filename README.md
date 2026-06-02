@@ -22,9 +22,21 @@ to a physical EPROM and install it in your machine.
 The whole loop runs through Claude: you talk to it, it drives the tools. The
 skills below are the specialized capabilities it reaches for at each step.
 
+> **Tip:** this is deep, multi-step reverse-engineering. It goes best with the
+> strongest model and room to run — use **Opus** and turn on **Auto mode** so
+> Claude can work through long record → investigate → patch → test loops without
+> stopping at every step.
+
 ## Installation
 
-**Claude Code (CLI):**
+**From your terminal** (no Claude session needed):
+
+```
+claude plugin marketplace add Techbert08/rom-workbench
+claude plugin install rom-workbench@rom-workbench
+```
+
+**From inside Claude Code**, the same thing as slash commands:
 
 ```
 /plugin marketplace add Techbert08/rom-workbench

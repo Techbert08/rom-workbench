@@ -1,6 +1,6 @@
 ---
 name: debug
-description: Reverse-engineer Williams Pinball Controller (WPC) ROMs — static + byte-level analysis with the bank-aware rom.py tool (6809 dis, recursive-descent xref/funcs, dump/search/strings) coupled to the live CPU debugger (replay.py --interactive + dbg.py: breakpoints, watchpoints, single-step, a frozen-CPU REPL). Use to disassemble a region, find who calls/references an address, trace where a register or RAM byte comes from, set a breakpoint and step, resolve a banked PC, verify patch bytes, or identify what a switch number physically is.
+description: Reverse-engineer Williams Pinball Controller (WPC) ROMs — static + byte-level analysis with the bank-aware rom.py tool (6809 dis, recursive-descent xref/funcs, dump/search/strings) coupled to the live CPU debugger (replay.py --interactive + dbg.py — breakpoints, watchpoints, single-step, a frozen-CPU REPL). Use to disassemble a region, find who calls/references an address, trace where a register or RAM byte comes from, set a breakpoint and step, resolve a banked PC, verify patch bytes, or identify what a switch number physically is.
 ---
 
 # debug

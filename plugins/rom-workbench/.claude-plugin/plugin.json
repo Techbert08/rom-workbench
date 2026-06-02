@@ -7,6 +7,5 @@
     "name": "Techbert08"
   },
   "repository": "https://github.com/Techbert08/rom-workbench",
-  "keywords": ["pinball", "wpc", "williams", "rom", "6809", "reverse-engineering"],
-  "category": "development"
+  "keywords": ["pinball", "wpc", "williams", "rom", "6809", "reverse-engineering"]
 }
