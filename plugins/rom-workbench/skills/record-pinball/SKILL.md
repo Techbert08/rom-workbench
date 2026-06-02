@@ -423,7 +423,6 @@ For a typical mod-validation workflow:
 - **VP physics is not bit-deterministic.** A recorded session captures the **switch-edge stream VP wrote into VPM** (the `switchlog.jsonl` / `kind:"switch"` records), not the keystrokes that caused it. Re-running VP would not reproduce the same session. The skill never re-runs VP at replay time; switches go directly into libpinmame via `PinmameSetSwitch`.
 - **Time keys are simulated seconds, not CPU cycles** (no cycle counter is exported by either libpinmame or VPM). Two-ROM diffs therefore align by event index, not by `t`.
 - **Switch capture is edge-triggered at the `vp_putSwitch` chokepoint**, so every switch transition VP issues is logged with no polling window to miss it (this replaced an earlier per-frame `swMatrix`-diff recorder). A genuine input timing floor remains the emulation clock's resolution, but recorded edges are faithful to what VP drove.
-- **`schemas/switches/<rom>.json` ships only for `congo_21`.** New ROMs trigger a discovery scan written to `<rom>.discovered.json`; promote it to `<rom>.json` after adding labels.
 - **DMD frames are stored as raw `.bin`**, not PNG, to keep the replay itself free of image-library dependencies. Width/height/bits-per-pixel live in `dmd.index.jsonl`. Render to PNG with `replay/render_dmd.py` (needs Pillow); see "Inspecting DMD frames" above.
 
 ## File layout
@@ -446,11 +445,10 @@ ${CLAUDE_PLUGIN_ROOT}/
 │   ├── diff_traces.py                # compare two replay output dirs (investigative)
 │   ├── render_dmd.py                 # DMD .bin frames -> PNG stills (Pillow)
 │   └── render_dmd_video.py           # DMD .bin frames -> real-time mp4 w/ timecode + muxed sound-trace audio (Pillow+ffmpeg)
-└── schemas/
-    ├── session.schema.json
-    ├── trace.schema.json
-    └── switches/
-        └── congo_21.json
+└── schemas/                         # informational JSON Schemas (nothing validates against them at runtime)
+    ├── session.schema.json           # session.jsonl contract (record.py output)
+    ├── trace.schema.json             # replay trace-output contract
+    └── names.schema.json             # ./names/<rom>.json switch-name map (working-dir, synthetic-recording)
 ```
 
 `record.py` is one cross-platform recorder: it picks the right Visual Pinball

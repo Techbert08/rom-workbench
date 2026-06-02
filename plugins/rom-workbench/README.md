@@ -32,7 +32,7 @@ Skills are then available as `/rom-workbench:wpc-investigate`, `/rom-workbench:r
 
 ## Game-specific configuration
 
-Place a `names/<rom>.json` file in your project directory for human-readable switch names in the synthetic recording skill. See `names/README.md` for the format.
+Place a `names/<rom>.json` file in your project (working) directory for human-readable switch names in the synthetic recording skill — a JSON object mapping switch number (string) to name. None ship with the plugin; see `schemas/names.schema.json` for the format.
 
 ## Private repo access
 

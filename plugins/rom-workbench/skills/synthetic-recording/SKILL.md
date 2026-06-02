@@ -68,13 +68,13 @@ timeout (7 s works for Congo; the real recording never idled longer than that).
 You need the right switch *numbers*. They come from three sources, in order of
 authority for the switch you care about:
 
-1. **`record-pinball/schemas/switches/<rom>.json`** — ROM ground truth for the
-   switches the PinMAME driver models (start, trough, slings, jets, lanes,
-   coin door). For Congo this is from `prelim/congo.c`. **It does not include
-   most playfield targets** — the prelim sim doesn't model them.
+1. **The PinMAME driver source** — ROM ground truth for the switches the driver
+   models (start, trough, slings, jets, lanes, coin door): the game's
+   `src/wpc/*.c` in the PinMAME tree (for Congo, `prelim/congo.c`). **It does not
+   include most playfield targets** — the prelim sim doesn't model them.
 2. **The table VBScript** (`orig/<table>.vbs`) — maps physical playfield objects
    to the switch numbers the ROM reads (`Controller.Switch(n)` /
-   `vpmTimer.PulseSw n`), so it covers the targets the schema omits, but its
+   `vpmTimer.PulseSw n`), so it covers the targets the driver omits, but its
    human labels are sparse.
 3. **Empirical, from a real recording** — the definitive answer to "which
    switch *does* X". Replay a session that exercised the feature with a
@@ -83,9 +83,9 @@ authority for the switch you care about:
    targets were pinned (replay with `--watch-w 0x068F`, the satellite counter;
    the two scoring hits were preceded by sw52 and sw51).
 
-Record the numbers you pin as clean aliases in `names/<rom>.json` (this skill),
-so future scenarios read `pulse("travi")` not `pulse(51)`. Keep the shared
-`schemas/switches/<rom>.json` for ROM-confirmed labels only.
+Record the numbers you pin as names in `./names/<rom>.json` in your working
+directory (a `{"<num>": "<name>"}` map; see `schemas/names.schema.json`), so
+future scenarios read `pulse("travi")` not `pulse(51)`.
 
 ## The builder API (`synth.py`)
 
@@ -104,7 +104,7 @@ s.keepalive("bottom_jet", every=7.0, start=16.0, stop=s.end()+1)
 s.write("sessions/<out>", labels=[...], notes="...")
 ```
 
-- Names resolve via `names/<rom>.json` then the shared schema; a raw int or
+- Names resolve via `./names/<rom>.json` in the working directory; a raw int or
   numeric string always works; an unknown name is a hard error (no silent
   misfire).
 - Times are **emulation seconds**. Inputs only take after boot warm-up
@@ -146,15 +146,12 @@ idle for a timer, tighter keepalive, a different splice cutoff.
 ```
 ${CLAUDE_PLUGIN_ROOT}/
 ├── SKILL.md                         # this file
-├── synth.py                         # builder library + `validate` CLI
-├── names/
-│   └── congo_21.json                # clean switch aliases (+ empirically-pinned targets)
-└── examples/
-    └── congo_satellite_double.py    # worked scenario: enter Satellite Transfer twice
+└── synth.py                         # builder library + `validate` CLI
 ```
 
-`names/<rom>.json` is per-game data; add a file per ROM as you pin switches.
-`examples/` holds runnable scenario scripts that double as documentation.
+Switch names are per-game **working-directory** data, not part of the plugin:
+author `./names/<rom>.json` in your project dir as you pin switches (a
+`{"<num>": "<name>"}` map; see `schemas/names.schema.json` for the format).
 
 ## Gotchas
 

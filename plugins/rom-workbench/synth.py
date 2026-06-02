@@ -35,13 +35,6 @@ import json
 import sys
 from pathlib import Path
 
-SKILL_DIR = Path(__file__).resolve().parent
-# The switch label map is ROM ground truth and lives with record-pinball.
-SCHEMA_DIR = SKILL_DIR.parent / "record-pinball" / "schemas" / "switches"
-# Clean hand-authoring aliases (and any target identities we pinned) live here.
-NAMES_DIR = SKILL_DIR / "names"
-
-
 def _now_iso() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
@@ -61,21 +54,22 @@ class Session:
     # -- switch identity -----------------------------------------------------
 
     def _load_switches(self, rom: str):
-        """Return (num->label for validation, name->num for resolution)."""
+        """Return (num->name for labels, name->num for resolution).
+
+        Switch names are user-authored ROM data and live in the working
+        directory by convention: ./names/<rom>.json, a JSON object mapping each
+        switch number (as a decimal string) to a human-readable name. None ship
+        with the plugin; see schemas/names.schema.json for the format. Absent
+        file -> numbers only (names can't be resolved, which is fine for
+        number-driven scenarios)."""
         labels: dict[int, str] = {}
         names: dict[str, int] = {}
-        schema = SCHEMA_DIR / f"{rom}.json"
-        if schema.exists():
-            j = json.loads(schema.read_text(encoding="utf-8"))
-            for grp in ("direct_switches", "matrix_switches"):
-                for num, label in j.get(grp, {}).items():
-                    labels[int(num)] = label
-        aliases = NAMES_DIR / f"{rom}.json"
-        if aliases.exists():
-            j = json.loads(aliases.read_text(encoding="utf-8"))
-            for name, num in j.get("aliases", {}).items():
-                names[name.lower()] = int(num)
-                labels.setdefault(int(num), name)
+        path = Path("names") / f"{rom}.json"
+        if path.exists():
+            j = json.loads(path.read_text(encoding="utf-8"))
+            for num, name in j.items():
+                labels[int(num)] = name
+                names[str(name).lower()] = int(num)
         return labels, names
 
     def resolve(self, sw) -> int:

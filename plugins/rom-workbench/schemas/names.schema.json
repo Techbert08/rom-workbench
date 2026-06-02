@@ -1,0 +1,22 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://github.com/Techbert08/rom-workbench/record-pinball/names.schema.json",
+    "title": "record-pinball per-game switch names",
+    "description": "User-authored switch-name map for one game ROM. Lives in the working directory by convention at ./names/<rom>.json (alongside ./orig, ./tables, ./sessions). Maps each switch number (a decimal string key) to a human-readable name. synth.py (synthetic-recording) loads it to resolve named switches (e.g. \"left_ramp\") to numbers and to label them. None ship with the plugin; create one per ROM as you pin switches. This schema is informational — nothing validates against it at runtime.",
+    "type": "object",
+    "patternProperties": {
+        "^[0-9]+$": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Human-readable name for this switch number (e.g. \"start_button\", \"left_ramp\")."
+        }
+    },
+    "additionalProperties": false,
+    "examples": [
+        {
+            "11": "start_button",
+            "16": "left_ramp",
+            "17": "right_ramp"
+        }
+    ]
+}
