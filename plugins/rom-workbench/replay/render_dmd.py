@@ -5,7 +5,7 @@
 # ///
 """Render captured DMD frames from a replay output dir to PNG.
 
-A `replay.ps1 -Trace Dmd` run writes one raw `.bin` per frame under
+A `replay.py --trace dmd` run writes one raw `.bin` per frame under
 `<OutDir>/dmd/NNNNNN.bin` plus metadata in `<OutDir>/dmd.index.jsonl`.
 Each frame is 1 byte per pixel of 8-bit luminance — libpinmame quantises
 the underlying WPC 2-bit DMD values up to 0/85/170/255-ish for portability.

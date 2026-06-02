@@ -5,7 +5,7 @@ description: Apply JSON patch specs to a WPC ROM zip and produce a patched, chec
 
 # build-wpc-rom
 
-Applies ordered JSON patch specs to a WPC game ROM, recalculates the WPC 16-bit checksum, and repackages the ROM zip. The output drops into VPinMAME's `roms\` directory for immediate testing via `record-pinball`'s single-sided `replay.py`.
+Applies ordered JSON patch specs to a WPC game ROM, recalculates the WPC 16-bit checksum, and repackages the ROM zip. The output drops into VP's `roms/` directory for immediate testing via `record-pinball`'s single-sided `replay.py`.
 
 ## When to invoke
 
@@ -16,30 +16,30 @@ Applies ordered JSON patch specs to a WPC game ROM, recalculates the WPC 16-bit 
 
 ## Quickstart
 
-```powershell
+```bash
 # Build with checksum disabled (safest during development)
-& '.claude\skills\build-wpc-rom\build.ps1' -DisableChecksum
+uv run '${CLAUDE_PLUGIN_ROOT}/build.py' --disable-checksum
 
-# Build with real checksum, deploy to VPinMAME
-& '.claude\skills\build-wpc-rom\build.ps1' -Deploy
+# Build with real checksum, deploy into VP's roms/ dir
+uv run '${CLAUDE_PLUGIN_ROOT}/build.py' --deploy
 
 # Validate against a recorded session (single-sided replay against the modded ROM).
 # First time the modded zip changes the WPC checksum word ($FFEE), produce a
 # freshly-reset NVRAM snapshot so the replay doesn't pay the factory-reset cost.
-uv run .\.claude\skills\record-pinball\init_nvram.py --rom-zip '.\dist\congo_21_modded.zip' --force
-uv run .\.claude\skills\record-pinball\replay.py `
-    --rom congo_21 --rom-zip '.\dist\congo_21_modded.zip' `
-    --session '.\sessions\<UTC>' `
-    --nvram '.\dist\congo_21_modded.nv' `
+uv run '${CLAUDE_PLUGIN_ROOT}/init_nvram.py' --rom-zip ./dist/congo_21_modded.zip --force
+uv run '${CLAUDE_PLUGIN_ROOT}/replay.py' \
+    --rom congo_21 --rom-zip ./dist/congo_21_modded.zip \
+    --session ./sessions/<UTC> \
+    --nvram ./dist/congo_21_modded.nv \
     --trace state,dmd
 ```
 
 ## Prerequisites
 
-- **PowerShell 7+** — `build.ps1` uses `#requires -Version 7.0`.
-- **ROM zip** in `.\orig\` (or pass `-RomZip <path>`). The build never modifies `orig/` — it reads the source zip and writes to `dist/`.
-- **Patch specs** in `.\source\patches\` (or pass `-PatchDir <path>`). May be empty; the script will still fix the checksum / disable it.
-- **`-Deploy` only**: `VPINMAME_DIR` env var set (run `pinball-setup/setup-pinball.py` once).
+- **`uv`** on PATH (installed by `pinball-setup`). `build.py` is a stdlib-only PEP 723 script — `uv run` provisions the interpreter; no `pip install` needed.
+- **ROM zip** in `./orig/` (or pass `--rom-zip <path>` / `--rom <name>`). The build never modifies `orig/` — it reads the source zip and writes to `dist/`.
+- **Patch specs** in `./source/patches/` (or pass `--patch-dir <path>`). May be empty; the script will still fix the checksum / disable it.
+- **`--deploy` only**: `VPINMAME_DIR` (Windows) / `PINMAME_DIR` (macOS) env var set (run `pinball-setup/setup-pinball.py` once).
 
 ## Patch spec format
 
@@ -79,13 +79,13 @@ Address formats (same as `wpc-investigate rom.py`):
   "new_hex": "00 FF"
 }
 ```
-(Alternatively, just pass `-DisableChecksum` to `build.ps1` and skip the patch file.)
+(Alternatively, just pass `--disable-checksum` to `build.py` and skip the patch file.)
 
 ## WPC checksum
 
 WPC startup walks the ROM byte-by-byte adding into a 16-bit wrapping accumulator, EXCEPT the two bytes at `$FFEC`/`$FFED` are read as a single big-endian 16-bit "delta" word and that value is added (in place of summing the two bytes individually). The total must equal the word stored at `$FFEE`.
 
-`build.ps1` recalculates this automatically after applying patches. Two modes:
+`build.py` recalculates this automatically after applying patches. Two modes:
 
 **Real checksum** (default):
 
@@ -97,21 +97,22 @@ Rule: `S_excl_delta + delta_word ≡ checksum_word_at_$FFEE  (mod 65536)`, where
 4. Write `delta_word` as a big-endian word at `$FFEC`–`$FFED`.
 5. Verify under the same model: `S_excl_delta + delta_word ≡ C (mod 65536)`.
 
-There is no byte-sum cap (no "510 maximum"); any single 16-bit value is a valid delta, so any patch — including one that changes `$FFEE` itself — can be balanced without compensating padding bytes. This is the actual WPC OS model, verified empirically on 2026-05-28 by building a ROM with a byte-sum that does NOT match the target and observing the WPC OS accept it (earlier "delta is two bytes summed additively, capped at 510" documentation was wrong).
+There is no byte-sum cap; any single 16-bit value is a valid delta, so any patch — including one that changes `$FFEE` itself — can be balanced without compensating padding bytes.
 
-**Disabled** (`-DisableChecksum`):
+**Disabled** (`--disable-checksum`):
 - Writes `0x00FF` at `$FFEC`. The WPC startup code sees `delta == 0xFF` and skips verification entirely. Safe for development builds; should be replaced with a real checksum before distribution.
 
 ## Parameters
 
 | Parameter | Default | Notes |
 |---|---|---|
-| `-RomZip` | First zip in `.\orig\` | Source ROM zip |
-| `-PatchDir` | `.\source\patches` | Directory of `*.json` patch specs |
-| `-OutZip` | `.\dist\<stem>_modded.zip` | Output zip |
-| `-DisableChecksum` | off | Write `0x00FF` at `$FFEC` instead of recalculating |
-| `-Deploy` | off | Copy output to `%VPINMAME_DIR%\roms\` |
-| `-Force` | off | Overwrite existing output zip |
+| `--rom` | — | Game name; source is `./orig/<rom>.zip` |
+| `--rom-zip` | First zip in `./orig/` | Source ROM zip (overrides `--rom`) |
+| `--patch-dir` | `./source/patches` | Directory of `*.json` patch specs |
+| `--out-zip` | `./dist/<stem>_modded.zip` | Output zip |
+| `--disable-checksum` | off | Write `0x00FF` at `$FFEC` instead of recalculating |
+| `--deploy` | off | Copy output into VP's `roms/` dir |
+| `--force` | off | Overwrite existing output zip |
 
 ## Workflow: write → build → validate
 
@@ -119,27 +120,26 @@ There is no byte-sum cap (no "510 maximum"); any single 16-bit value is a valid 
 1. Identify bytes to patch (wpc-investigate: rom.py dis/xref/funcs/dump/search;
    wpc-debug: the live debugger for confirming the path)
 2. Write source/patches/NNN-description.json
-3. & '.claude\skills\build-wpc-rom\build.ps1' -DisableChecksum
-4. uv run .\.claude\skills\record-pinball\init_nvram.py \
-       --rom-zip .\dist\congo_21_modded.zip --force
-5. uv run .\.claude\skills\record-pinball\replay.py \
-       --rom congo_21 --rom-zip .\dist\congo_21_modded.zip \
-       --session .\sessions\<UTC> --nvram .\dist\congo_21_modded.nv \
+3. uv run '${CLAUDE_PLUGIN_ROOT}/build.py' --disable-checksum
+4. uv run '${CLAUDE_PLUGIN_ROOT}/init_nvram.py' \
+       --rom-zip ./dist/congo_21_modded.zip --force
+5. uv run '${CLAUDE_PLUGIN_ROOT}/replay.py' \
+       --rom congo_21 --rom-zip ./dist/congo_21_modded.zip \
+       --session ./sessions/<UTC> --nvram ./dist/congo_21_modded.nv \
        --trace state,dmd
 6. Inspect the trace — confirm the patched code ran and produced the intended
    effect (e.g. expected DMD content at expected frames). Optionally run
    replay/diff_traces.py against a factory run to investigate unintended
    side effects; see "Two-run comparison" in record-pinball/SKILL.md for the
    caveats around NVRAM coupling.
-7. When satisfied: rebuild without -DisableChecksum for a clean checksum
+7. When satisfied: rebuild without --disable-checksum for a clean checksum
 ```
 
 ## Congo-specific notes
 
 - Factory ROM: `orig/congo_21.zip` (game ROM `cg_g11.2_1`, 512 KiB)
-- Checksum word `$FFEE` = 0x2121, delta `$FFEC` = 0x8DDE — **enforced** (this is
-  ONLY the checksum target; it is NOT the displayed version — that was a long-held
-  myth, disproven 2026-05-30)
+- Checksum word `$FFEE` = 0x2121, delta `$FFEC` = 0x8DDE — **enforced**. This is
+  only the checksum target; it is not the displayed version.
 - Displayed version = two ROM bytes `$FFBE` (major, 0x02) / `$FFBF` (minor, 0x10),
   loaded by `$42AE@p3A` and rendered by format engine `$4037@p39`. "2.1→2.2" =
   patch `$FFBF` 0x10→0x20. See `notes/congo-version-display.md`.
@@ -149,6 +149,6 @@ There is no byte-sum cap (no "510 maximum"); any single 16-bit value is a valid 
 
 ```
 ${CLAUDE_PLUGIN_ROOT}/
-├── SKILL.md    # this file
-└── build.ps1   # main build script
+├── SKILL.md   # this file
+└── build.py   # main build script (cross-platform)
 ```
