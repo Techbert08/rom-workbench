@@ -26,7 +26,7 @@ Skills are then available as `/rom-workbench:wpc-investigate`, `/rom-workbench:r
 
 - Claude Code (latest version)
 - [uv](https://docs.astral.sh/uv/) (runs the replay/analysis scripts; `pinball-setup` installs it if missing). No system Python required — uv provisions the interpreter and per-script dependencies.
-- PowerShell 7+ (for the Windows recording/registration scripts; setup itself is a cross-platform Python script)
+- PowerShell 7+ (for the Windows ROM build script `build.ps1`; setup and recording are cross-platform Python)
 - Windows: Visual Pinball X + PinMAME for session recording (run `pinball-setup` first)
 - macOS: `libpinmame.dylib` ships in `bin/` for headless replay (no VP needed)
 

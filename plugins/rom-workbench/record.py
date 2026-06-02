@@ -18,13 +18,18 @@ the same swMatrix plane VP drove — so gameplay reproduces faithfully.
 Stop recording by closing the Visual Pinball window (or Ctrl-C here); --max-sec
 is a safety cap.
 
+ROM zip and table are resolved from the working directory by convention:
+    ROM zip   ./orig/<rom>.zip, then ./dist/<rom>.zip   (override: --rom-zip)
+    table     ./tables/<rom>.vpx                         (override: --table)
+The ROM zip is staged into VPinMAME's roms/ directory just before launch — VP
+loads ROMs from there by gamename, so it has to live there at record time.
+
 Usage:
-    uv run record.py [--rom congo_21] [--table <path.vpx>] [--out-dir <dir>]
-                     [--max-sec 600] [--config ./config.json]
+    uv run record.py [--rom congo_21] [--rom-zip <path.zip>] [--table <path.vpx>]
+                     [--out-dir <dir>] [--max-sec 600]
 
 Requires VPINBALL_DIR and (macOS) PINMAME_DIR / (Windows) VPINMAME_DIR in the
-environment — set by pinball-setup/setup-pinball.py. The ROM zip must be staged
-under the roms/ dir (run add-rom).
+environment — set by pinball-setup/setup-pinball.py.
 """
 
 from __future__ import annotations
@@ -41,7 +46,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import NoReturn, Optional
+from typing import NoReturn
 
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
@@ -108,17 +113,6 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
-
-
-def table_from_config(path: Path, rom: str) -> Optional[str]:
-    """Read the .vpx path registered for `rom` from a config.json (tables.<rom>,
-    or the legacy flat table_path). Returns None if the file is missing/unparseable."""
-    try:
-        cfg = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    tbl = (cfg.get("tables") or {}).get(rom)
-    return tbl or cfg.get("table_path")
 
 
 def utc_stamp() -> str:
@@ -198,28 +192,44 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description="Record a WPC gameplay session in Visual Pinball + VPinMAME.")
     ap.add_argument("--rom", default="congo_21",
-                    help="VPM ROM name (zip stem under the roms/ dir). Default: congo_21.")
+                    help="VPM gamename VPinMAME loads. Default: congo_21.")
+    ap.add_argument("--rom-zip", default=None,
+                    help="ROM zip. Default: ./orig/<rom>.zip, then ./dist/<rom>.zip.")
     ap.add_argument("--table", default=None,
-                    help="Path to a .vpx table. Default: looked up from --config by ROM.")
+                    help="VPX table to play. Default: ./tables/<rom>.vpx.")
     ap.add_argument("--out-dir", default=None,
                     help="Output directory. Default: ./sessions/<UTC>.")
     ap.add_argument("--max-sec", type=int, default=600,
                     help="Safety stop; recording auto-terminates after this many seconds.")
-    ap.add_argument("--config", default="./config.json",
-                    help="Project config.json (written by add-rom). Default: ./config.json.")
     args = ap.parse_args()
 
     if not (IS_WIN or IS_MAC):
         die(f"Unsupported platform: {sys.platform} (record needs macOS or Windows).")
 
+    # --- Resolve ROM zip + table from the working dir by convention ----------
+    if args.rom_zip:
+        rom_zip = Path(args.rom_zip)
+        if not rom_zip.is_file():
+            die(f"ROM zip not found: {rom_zip}")
+    else:
+        rom_zip = next((p for p in (Path("orig") / f"{args.rom}.zip",
+                                    Path("dist") / f"{args.rom}.zip") if p.is_file()), None)
+        if rom_zip is None:
+            die(f"ROM zip for '{args.rom}' not found. Put it at ./orig/{args.rom}.zip "
+                f"(or ./dist/{args.rom}.zip), or pass --rom-zip <path>.")
+    rom_zip = rom_zip.resolve()
+
+    table = Path(args.table) if args.table else Path("tables") / f"{args.rom}.vpx"
+    if not table.is_file():
+        die(f"Table for '{args.rom}' not found at {table}. Put it at "
+            f"./tables/{args.rom}.vpx, or pass --table <path>.")
+    table = table.resolve()
+
     # --- Env / paths ---------------------------------------------------------
     vpinball = Path(env_or_die("VPINBALL_DIR"))
-    # ROMs are staged under VPINMAME_DIR on Windows, PINMAME_DIR on macOS.
+    # VP loads ROMs by gamename from VPinMAME's roms dir: VPINMAME_DIR on Windows,
+    # PINMAME_DIR on macOS.
     rom_root = Path(env_or_die("VPINMAME_DIR" if IS_WIN else "PINMAME_DIR"))
-
-    rom_zip = rom_root / "roms" / f"{args.rom}.zip"
-    if not rom_zip.is_file():
-        die(f"ROM zip not staged at {rom_zip}. Run pinball-setup/add-rom.")
 
     # Resolve the VPX executable.
     if IS_WIN:
@@ -236,25 +246,12 @@ def main() -> int:
             die(f"VPinballX_GL not found at {vpx_exe}. Run pinball-setup/setup-pinball.py, "
                 "or drag VPinballX_GL.app into VPINBALL_DIR.")
 
-    # --- Resolve the table ---------------------------------------------------
-    table_str = args.table
-    if not table_str:
-        candidates = [Path(args.config)]
-        if IS_WIN and os.environ.get("LOCALAPPDATA"):
-            candidates.append(Path(os.environ["LOCALAPPDATA"]) / "record-pinball" / "config.json")
-        for cp in candidates:
-            if cp.is_file():
-                hit = table_from_config(cp, args.rom)
-                if hit:
-                    table_str = hit
-                    break
-    if not table_str:
-        die(f"No table registered for ROM '{args.rom}'. Run add-rom with --table, "
-            "or pass --table here.")
-    table = Path(table_str)
-    if not table.is_file():
-        die(f"Table not found: {table}")
-    table = table.resolve()
+    # Stage the ROM into VP's roms dir just before launch (VPinMAME loads it by
+    # gamename from there). Overwrites any stale copy from a previous run.
+    roms_dir = rom_root / "roms"
+    roms_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(rom_zip, roms_dir / f"{args.rom}.zip")
+    ok(f"Staged ROM -> {roms_dir / f'{args.rom}.zip'}")
 
     # --- Output dir ----------------------------------------------------------
     out_dir = Path(args.out_dir) if args.out_dir else Path.cwd() / "sessions" / utc_stamp()

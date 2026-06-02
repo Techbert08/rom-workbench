@@ -1,6 +1,6 @@
 ---
 name: pinball-setup
-description: One-time installer for the WPC mod toolchain — Visual Pinball X + PinMAME + VPinMAME + the patched libpinmame (for record-pinball), and per-game ROM/table registration via add-rom. Use only on first machine setup or when reinstalling a single component. Not needed for day-to-day mod work.
+description: One-time installer for the WPC mod toolchain — Visual Pinball X + PinMAME + VPinMAME + the patched libpinmame (for record-pinball). Use only on first machine setup or when reinstalling a single component. Not needed for day-to-day mod work.
 ---
 
 # pinball-setup
@@ -11,7 +11,6 @@ One-time install. Once setup runs successfully, day-to-day work doesn't need thi
 
 - "set up the pinball toolchain" / "install the WPC mod tools"
 - "install Visual Pinball / PinMAME / VPinMAME"
-- "register Congo as a ROM" / "add a new game to the recorder"
 - "redeploy the patched libpinmame after a rebuild"
 
 For everyday "analyze a ROM" / "replay a session" / "set a breakpoint" requests, **skip this skill** — the install is already done on a configured machine.
@@ -83,39 +82,21 @@ Steps:
 
 Downloads are SHA-256 verified against a sidecar recorded on first use (trust-on-first-use). To pin upstream hashes, fill in the empty `expected_sha` constants near the top of the script.
 
-### `add-rom.sh` / `add-rom.ps1` — register a game
+### Per-game files: working-dir convention (no registration step)
 
-Per-game registration stays platform-native (`add-rom.sh` on macOS, `add-rom.ps1`
-on Windows):
+There's no per-game install command. `record.py` finds a game's files by
+convention from the working directory:
 
-```bash
-bash '${CLAUDE_PLUGIN_ROOT}/add-rom.sh' \
-    --rom-zip '<path-to-rom-zip>' \   # required
-    [--rom <name>] \                  # default: basename of the zip
-    [--table '<path-to-vpx>'] \       # optional
-    [--skip-table] \                  # stage ROM only; recording needs a table later
-    [--force]
-```
+| File | Looked for at | Override |
+|---|---|---|
+| ROM zip | `./orig/<rom>.zip`, then `./dist/<rom>.zip` | `--rom-zip <path>` |
+| VPX table | `./tables/<rom>.vpx` | `--table <path>` |
 
-Copies the ROM zip to `$PINMAME_DIR/roms/<rom>.zip` and records the VPX table path in `./config.json`.
-
-#### `add-rom.ps1` (Windows)
-
-```powershell
-& '${CLAUDE_PLUGIN_ROOT}/add-rom.ps1' `
-    -RomZip '<path-to-rom-zip>' `    # required
-    [-Rom <name>] `                  # default: basename of the zip
-    [-Table '<path-to-vpx>'] `       # optional; otherwise prompted
-    [-SkipTable] `                   # stage the ROM only; register a table later to record
-    [-Force]                         # overwrite staged zip / registered table
-```
-
-Per-game registration:
-1. Copies the ROM zip to `%VPINMAME_DIR%\roms\<rom>.zip`.
-2. If `-Table` is supplied, copies the `.vpx` into `%VPINBALL_DIR%\Tables\` and records the path in `%LOCALAPPDATA%\record-pinball\config.json` under `tables.<rom>`.
-3. Otherwise prompts: open VPUniverse search / paste a path / skip.
-
-After this, `record.py --rom <name>` picks up the table automatically.
+`record.py` stages the ROM zip into VP's `roms/` dir (`$PINMAME_DIR/roms` on
+macOS, `%VPINMAME_DIR%\roms` on Windows) itself, just before launch — VP loads
+ROMs from there by gamename, so it only has to live there at record time. Drop a
+game's files into `./orig/` and `./tables/` and run `record.py --rom <name>`;
+nothing to register.
 
 ## Acquiring game files (ROM zip + VPX table)
 
@@ -140,7 +121,9 @@ Each game needs **two** files: a ROM zip and a VPX table. Neither is auto-downlo
 
 4. **Save in `~/Downloads`** (i.e. `C:\Users\<user>\Downloads\`). User pings back when done.
 
-5. **Claude extracts the `.vpx` from its `.zip`** if needed (`Expand-Archive`) and runs `add-rom.ps1 -RomZip <…> -Table <…>`.
+5. **Claude extracts the `.vpx` from its `.zip`** if needed and drops the files
+   into the game working dir by convention: ROM zip → `./orig/<rom>.zip`, table →
+   `./tables/<rom>.vpx`. Then `record.py --rom <rom>` picks them up.
 
 ### Legality and authorship
 
@@ -183,7 +166,6 @@ To launch `setup-pinball.py` the first time you need **either** uv **or** any
 Python 3.9+ (`python3 setup-pinball.py` will then install uv for you). After that:
 
 ### Windows
-- **PowerShell 7+** (`pwsh`) — used by `add-rom.ps1` (the Windows recorder is now `record.py`).
 - **One Administrator PowerShell** for the one-time `regsvr32 VPinMAME.dll` step.
 
 ### macOS
@@ -196,7 +178,5 @@ Python 3.9+ (`python3 setup-pinball.py` will then install uv for you). After tha
 ```
 ${CLAUDE_PLUGIN_ROOT}/
 ├── SKILL.md                # this file
-├── setup-pinball.py        # cross-platform VP + PinMAME (+ VPinMAME on Windows) installer
-├── add-rom.ps1             # per-game ROM + table registration (Windows)
-└── add-rom.sh              # per-game ROM + table registration (macOS)
+└── setup-pinball.py        # cross-platform VP + PinMAME (+ VPinMAME on Windows) installer
 ```

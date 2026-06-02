@@ -829,13 +829,12 @@ def main() -> int:
     print()
     if IS_WIN:
         print("Env vars set at user scope. Open a new terminal to pick them up.")
-        print("Next: register a ROM with add-rom.ps1, e.g.")
-        print("  add-rom.ps1 -RomZip '.\\congo_21.zip' [-Table '<path-to-vpx>']")
     else:
         print("Env vars written to ~/.zshenv and ~/.bash_profile.")
         print("Restart your shell or run:  source ~/.zshenv")
-        print("Next: register a ROM with add-rom.sh, e.g.")
-        print(f"  bash {SCRIPT_DIR}/add-rom.sh --rom-zip ./orig/congo_21.zip")
+    print("Next: from a game working dir (ROM at ./orig/<rom>.zip, table at")
+    print("./tables/<rom>.vpx), record a session, e.g.")
+    print("  uv run record.py --rom congo_21")
     return 0
 
 

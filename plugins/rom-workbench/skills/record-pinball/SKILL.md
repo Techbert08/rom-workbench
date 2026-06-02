@@ -26,18 +26,17 @@ infrastructure (sessions + NVRAM snapshots) is the substrate it runs on.
 - "make an NVRAM snapshot for this ROM" / "init nvram"
 - "set a breakpoint on $D9A6 and tell me what A is" (Dbg trace; see also `wpc-investigate`)
 
-For first-time machine setup or per-game ROM/table registration, use the
-**`pinball-setup`** skill instead. For static analysis and the investigation workflow that *uses* the `Dbg` trace,
+For first-time machine setup, use the **`pinball-setup`** skill instead. For static analysis and the investigation workflow that *uses* the `Dbg` trace,
 use **`wpc-investigate`**.
 
 ## Quickstart
 
-Assumes you've already run `pinball-setup/setup-pinball.py` and
-`pinball-setup\add-rom.ps1` for your game. From a PowerShell 7 prompt
-(any working directory):
+Assumes you've already run `pinball-setup/setup-pinball.py`. Work from a game
+directory laid out by convention — ROM zip at `.\orig\<rom>.zip` (or
+`.\dist\<rom>.zip`), table at `.\tables\<rom>.vpx`. From a PowerShell 7 prompt:
 
 ```powershell
-# Record a session. Looks up the table for --rom from config.json. Press Ctrl-C to stop.
+# Record a session. Finds the ROM/table for --rom by convention. Press Ctrl-C to stop.
 uv run '${CLAUDE_PLUGIN_ROOT}/record.py' --rom congo_21
 
 # One-time per ROM zip: produce a freshly-reset NVRAM snapshot so replays
@@ -71,12 +70,13 @@ directory — they live next to whatever repo you ran from.
 
 This skill expects `pinball-setup` to have run successfully — that's where
 the toolchain, env vars (`PINMAME_DIR`, `VPINBALL_DIR`, `VPINMAME_DIR`),
-patched DLLs, and per-game ROM/table registration come from. Specifically
-needed:
+and patched DLLs come from. Specifically needed:
 
 - `PINMAME_DIR` env var pointing at the PinMAME install with our patched
   `libpinmame.dll` deployed.
-- The ROM zip registered via `pinball-setup\add-rom.ps1`.
+- A game working dir with the ROM zip at `.\orig\<rom>.zip` (or `.\dist\<rom>.zip`)
+  and the table at `.\tables\<rom>.vpx`. `record.py` stages the ROM into VP's
+  `roms/` dir itself, just before launch.
 - `uv` on PATH (installed by `pinball-setup`). Every Python tool here runs via
   `uv run`, which provisions a matching interpreter and each script's declared
   dependencies (e.g. Pillow for DMD rendering) into an ephemeral environment —
@@ -93,10 +93,10 @@ right Visual Pinball binary for the OS and both produce an identical `session.js
 ```bash
 uv run '${CLAUDE_PLUGIN_ROOT}/record.py' \
     [--rom congo_21] \                     # default: congo_21
-    [--table '<path-to-vpx>'] \            # default: from config.json
+    [--rom-zip '<path-to-zip>'] \          # default: ./orig/<rom>.zip, then ./dist/<rom>.zip
+    [--table '<path-to-vpx>'] \            # default: ./tables/<rom>.vpx
     [--out-dir '<dir>'] \                  # default: ./sessions/<UTC>
-    [--max-sec 600] \                      # safety stop
-    [--config ./config.json]               # config written by add-rom
+    [--max-sec 600]                        # safety stop
 ```
 
 Sessions are written to `./sessions/<UTC>/` relative to the current working directory.
@@ -440,8 +440,6 @@ ${CLAUDE_PLUGIN_ROOT}/
 │   ├── libpinmame.dylib              # patched libpinmame — VPINMAME_SWITCHLOG recorder (macOS record.py) + replay
 │   ├── pinmame64.dll                 # patched libpinmame — used by replay_host.py
 │   └── libpinmame.dll                # canonical-name copy of pinmame64.dll (loader alias)
-├── lib/
-│   └── Common.ps1                    # Write-Step/Ok/Warn2, SHA-256, env, config (add-rom.ps1)
 ├── replay/
 │   ├── replay_host.py                # libpinmame ctypes driver — event-driven; spawns
 │   │                                 #   a worker thread that blocks on PinmameDebugWait.
@@ -461,7 +459,7 @@ binary and launch mechanism per OS (Windows `VPinballX64.exe` directly; macOS
 `open -a VPinballX_GL.app`), sets the patched-DLL switch-log env var, monitors
 the process, and folds the captured switch stream into `session.jsonl`. The
 investigation-side wrappers (`replay`, `init_nvram`) are likewise Python,
-orchestrating `replay_host.py`. (Per-game `add-rom` stays platform-native PS/bash.)
+orchestrating `replay_host.py`.
 
 ## References
 
