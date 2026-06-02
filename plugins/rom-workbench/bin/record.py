@@ -29,7 +29,7 @@ Usage:
                      [--out-dir <dir>] [--max-sec 600]
 
 Requires VPINBALL_DIR and (macOS) PINMAME_DIR / (Windows) VPINMAME_DIR in the
-environment — set by pinball-setup/setup-pinball.py.
+environment — set by the setup skill (setup-pinball.py).
 """
 
 from __future__ import annotations
@@ -101,7 +101,7 @@ def die(msg: str) -> NoReturn:
 def env_or_die(name: str) -> str:
     v = os.environ.get(name)
     if not v:
-        die(f"{name} not set. Run pinball-setup/setup-pinball.py and open a new shell.")
+        die(f"{name} not set. Run the setup skill (setup-pinball.py) and open a new shell.")
     if not Path(v).exists():
         die(f"{name}={v} does not exist.")
     return v
@@ -243,7 +243,7 @@ def main() -> int:
             vpx_app = Path("/Applications/VPinballX_GL.app")
         vpx_exe = vpx_app / "Contents" / "MacOS" / "VPinballX_GL"
         if not vpx_exe.is_file():
-            die(f"VPinballX_GL not found at {vpx_exe}. Run pinball-setup/setup-pinball.py, "
+            die(f"VPinballX_GL not found at {vpx_exe}. Run the setup skill (setup-pinball.py), "
                 "or drag VPinballX_GL.app into VPINBALL_DIR.")
 
     # Stage the ROM into VP's roms dir just before launch (VPinMAME loads it by

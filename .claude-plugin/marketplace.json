@@ -8,7 +8,7 @@
     {
       "name": "rom-workbench",
       "source": "./plugins/rom-workbench",
-      "description": "All WPC skills bundled: wpc-investigate, wpc-debug, build-wpc-rom, record-pinball, synthetic-recording, pinball-setup"
+      "description": "All WPC skills bundled: build, record, synthetic-record, debug, setup"
     }
   ]
 }

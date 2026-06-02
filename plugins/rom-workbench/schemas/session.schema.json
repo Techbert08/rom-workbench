@@ -1,7 +1,7 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://github.com/Techbert08/rom-workbench/record-pinball/session.schema.json",
-    "title": "record-pinball session.jsonl record",
+    "$id": "https://github.com/Techbert08/rom-workbench/record/session.schema.json",
+    "title": "record session.jsonl record",
     "description": "Newline-delimited JSON records emitted by record.py. The first record MUST be of kind 'meta'. All other records are timestamped events. Time `t` is the emulation-clock timestamp of each switch edge, as logged by the patched VPinMAME DLL.",
     "oneOf": [
         {

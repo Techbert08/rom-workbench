@@ -3,7 +3,7 @@
 # requires-python = ">=3.9"
 # dependencies = []
 # ///
-"""Cross-platform one-time installer for the rom-workbench (record-pinball) toolchain.
+"""Cross-platform one-time installer for the rom-workbench (record) toolchain.
 
 A stdlib-only script that installs everything under a per-user data directory:
 
@@ -21,7 +21,7 @@ Run it with either Python or uv:
 Steps:
   1. Ensure uv is installed (the day-to-day Python tools run via `uv run`).
   2. Download + install Visual Pinball X.
-  3. Deploy the prebuilt patched libpinmame from bin/ into PINMAME_DIR (replay
+  3. Deploy the prebuilt patched libpinmame from lib/ into PINMAME_DIR (replay
      loads it via ctypes; it's self-contained, so nothing to download).
      macOS:   also deploy the dylib into the VPX bundle, re-sign, Gatekeeper-check.
      Windows: also install VPinMAME COM, deploy the patched VPinMAME64.dll, and
@@ -50,10 +50,11 @@ IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 IS_LINUX = sys.platform.startswith("linux")
 
-SCRIPT_DIR = Path(__file__).resolve().parent          # plugins/rom-workbench
-BIN_DIR = SCRIPT_DIR / "bin"
-PATCHES_DIR = SCRIPT_DIR / "pinmame-patches"
-REPO_ROOT = SCRIPT_DIR.parent.parent                  # the rom-workbench checkout root
+SCRIPT_DIR = Path(__file__).resolve().parent          # plugins/rom-workbench/bin
+PLUGIN_ROOT = SCRIPT_DIR.parent                       # plugins/rom-workbench
+LIB_DIR = PLUGIN_ROOT / "lib"
+PATCHES_DIR = PLUGIN_ROOT / "pinmame-patches"
+REPO_ROOT = PLUGIN_ROOT.parent.parent                 # the rom-workbench checkout root
 
 # --- Pinned releases ---------------------------------------------------------
 # Trust-on-first-use SHA-256: an empty pin means the hash is recorded on the
@@ -66,7 +67,7 @@ VPX_MAC_ASSET_TMPL = "VPinballX_GL-10.8.0-2052-5a81d4e-Release-macos-{arch}.zip"
 VPX_BASE_URL = f"https://github.com/vpinball/vpinball/releases/download/v{VPX_TAG}"
 
 # VPinMAME COM server (Windows). Supplies bass64.dll and the directory layout;
-# the patched VPinMAME64.dll from bin/ overlays the stock one after extraction.
+# the patched VPinMAME64.dll from lib/ overlays the stock one after extraction.
 PINMAME_VERSION = "3.6.0-1227-ecd032e"
 VPINMAME_WIN_ASSET = f"VPinMAME-{PINMAME_VERSION}-win-x64.zip"
 PINMAME_BASE_URL = f"https://github.com/vpinball/pinmame/releases/download/v{PINMAME_VERSION}"
@@ -437,7 +438,7 @@ def install_libpinmame_macos(root: Path, pinmame_src: Path, force: bool) -> Path
     pinmame_dir = root / "pinmame"
     pinmame_dir.mkdir(parents=True, exist_ok=True)
     target = pinmame_dir / "libpinmame.dylib"
-    prebuilt = BIN_DIR / "libpinmame.dylib"
+    prebuilt = LIB_DIR / "libpinmame.dylib"
     arch = platform.machine()
 
     if target.exists() and not force:
@@ -447,9 +448,9 @@ def install_libpinmame_macos(root: Path, pinmame_src: Path, force: bool) -> Path
     if prebuilt.exists() and not force:
         if _macho_arch(prebuilt) == arch:
             shutil.copy2(prebuilt, target)
-            ok(f"Deployed from bin/libpinmame.dylib (pre-built {arch}).")
+            ok(f"Deployed from lib/libpinmame.dylib (pre-built {arch}).")
             return pinmame_dir
-        warn(f"bin/libpinmame.dylib is {_macho_arch(prebuilt) or 'unknown arch'}, "
+        warn(f"lib/libpinmame.dylib is {_macho_arch(prebuilt) or 'unknown arch'}, "
              f"machine is {arch} — building from source.")
 
     _build_libpinmame_macos(pinmame_src, target, prebuilt, arch)
@@ -524,7 +525,7 @@ def _build_libpinmame_macos(pinmame_src: Path, target: Path,
     shutil.copy2(built, target)
     ok(f"Installed to {target}")
     shutil.copy2(built, prebuilt)
-    ok("Updated bin/libpinmame.dylib from source build.")
+    ok("Updated lib/libpinmame.dylib from source build.")
 
 
 def deploy_dylib_to_bundle(vpx_dir: "Path | None", dylib: Path) -> None:
@@ -629,7 +630,7 @@ def gatekeeper_check(vpx_dir: "Path | None") -> None:
 
 
 # =============================================================================
-# Windows: patched libpinmame (from bin/), VPinMAME COM
+# Windows: patched libpinmame (from lib/), VPinMAME COM
 # =============================================================================
 
 def install_pinmame_windows(root: Path, force: bool) -> Path:
@@ -637,13 +638,13 @@ def install_pinmame_windows(root: Path, force: bool) -> Path:
 
     replay.py loads libpinmame.dll from here via ctypes. The library is
     self-contained (only the MSVC++ runtime + system DLLs — no bass64, no data
-    files), so there's nothing to download; we deploy bin/libpinmame.dll
+    files), so there's nothing to download; we deploy lib/libpinmame.dll
     directly, mirroring the macOS path."""
     pinmame_dir = root / "pinmame"
     step(f"Patched libpinmame at {pinmame_dir}")
-    patched = BIN_DIR / "libpinmame.dll"
+    patched = LIB_DIR / "libpinmame.dll"
     if not patched.exists():
-        die("bin/libpinmame.dll not found; replay needs it "
+        die("lib/libpinmame.dll not found; replay needs it "
             "(rebuild per pinmame-patches/README.md).")
     pinmame_dir.mkdir(parents=True, exist_ok=True)
     target = pinmame_dir / "libpinmame.dll"
@@ -651,7 +652,7 @@ def install_pinmame_windows(root: Path, force: bool) -> Path:
         ok(f"libpinmame.dll present at {target}; skipping.")
     else:
         shutil.copy2(patched, target)
-        ok(f"Deployed bin/libpinmame.dll -> {target}")
+        ok(f"Deployed lib/libpinmame.dll -> {target}")
     return pinmame_dir
 
 
@@ -672,9 +673,9 @@ def install_vpinmame_windows(root: Path, force: bool) -> Path:
         ok("VPinMAME extracted.")
 
     # Deploy the patched VPinMAME64.dll (the VPINMAME_SWITCHLOG recorder).
-    patched = BIN_DIR / "VPinMAME64.dll"
+    patched = LIB_DIR / "VPinMAME64.dll"
     if not patched.exists():
-        warn("bin\\VPinMAME64.dll not found; record.py VpRecord needs it.")
+        warn("lib\\VPinMAME64.dll not found; record.py VpRecord needs it.")
     elif not dll64.exists():
         warn(f"VPinMAME64.dll not installed at {dll64}; cannot deploy patch.")
     else:

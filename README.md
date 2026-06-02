@@ -6,12 +6,11 @@ A Claude Code plugin for reverse-engineering and modding Williams Pinball Contro
 
 | Skill | Description |
 |---|---|
-| `wpc-investigate` | Static + byte-level ROM analysis — bank-aware 6809 disassembly, recursive-descent xref/function discovery, hex dump, byte/string search via `rom.py` |
-| `wpc-debug` | Methodology playbook for driving the live CPU debugger: banked-PC resolution, breakpoints, watchpoints, single-step, the persistent frozen-CPU session |
-| `build-wpc-rom` | Apply JSON patch specs to a WPC ROM zip, recompute the WPC checksum, produce a drop-in patched zip |
-| `record-pinball` | Capture gameplay sessions in Visual Pinball + VPinMAME; replay headlessly with state/DMD/audio/debugger traces; event-driven CPU debugger with breakpoints and watchpoints |
-| `synthetic-recording` | Author a replayable WPC session by hand — emit the switch-edge stream to drive the ROM into a chosen state without Visual Pinball |
-| `pinball-setup` | One-time toolchain installer: Visual Pinball X, PinMAME, VPinMAME, patched libpinmame with the debug API |
+| `build` | Apply JSON patch specs to a WPC ROM zip, recompute the WPC checksum, produce a drop-in patched zip |
+| `record` | Capture gameplay sessions in Visual Pinball + VPinMAME; replay headlessly with state/DMD/audio/debugger traces; event-driven CPU debugger with breakpoints and watchpoints |
+| `synthetic-record` | Author a replayable WPC session by hand — emit the switch-edge stream to drive the ROM into a chosen state without Visual Pinball |
+| `debug` | Reverse-engineer ROMs end to end: bank-aware 6809 disassembly + recursive-descent xref/function discovery (`rom.py`) coupled to the live CPU debugger — banked-PC resolution, breakpoints, watchpoints, single-step, the persistent frozen-CPU session |
+| `setup` | One-time toolchain installer: Visual Pinball X, PinMAME, VPinMAME, patched libpinmame with the debug API |
 
 ## Install
 
@@ -20,15 +19,15 @@ A Claude Code plugin for reverse-engineering and modding Williams Pinball Contro
 /plugin install rom-workbench@rom-workbench
 ```
 
-Skills are then available as `/rom-workbench:wpc-investigate`, `/rom-workbench:record-pinball`, etc.
+Skills are then available as `/rom-workbench:debug`, `/rom-workbench:record`, etc.
 
 ## Requirements
 
 - Claude Code (latest version)
-- [uv](https://docs.astral.sh/uv/) (runs the replay/analysis scripts; `pinball-setup` installs it if missing). No system Python required — uv provisions the interpreter and per-script dependencies.
+- [uv](https://docs.astral.sh/uv/) (runs the replay/analysis scripts; the `setup` skill installs it if missing). No system Python required — uv provisions the interpreter and per-script dependencies.
 - PowerShell 7+ (for the Windows recording/registration scripts; setup itself is a cross-platform Python script)
-- Windows: Visual Pinball X + PinMAME for session recording (run `pinball-setup` first)
-- macOS: `libpinmame.dylib` ships in `bin/` for headless replay (no VP needed)
+- Windows: Visual Pinball X + PinMAME for session recording (run the `setup` skill first)
+- macOS: `libpinmame.dylib` ships in `lib/` for headless replay (no VP needed)
 
 ## Game-specific configuration
 

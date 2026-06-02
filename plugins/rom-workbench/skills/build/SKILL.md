@@ -1,11 +1,11 @@
 ---
-name: build-wpc-rom
-description: Apply JSON patch specs to a WPC ROM zip and produce a patched, checksum-correct output zip ready for VPinMAME. Use when you have patch specs in source/patches/ and want to build dist/<rom>_modded.zip, or when you want to validate a patch by replaying a recorded session against it via record-pinball.
+name: build
+description: Apply JSON patch specs to a WPC ROM zip and produce a patched, checksum-correct output zip ready for VPinMAME. Use when you have patch specs in source/patches/ and want to build dist/<rom>_modded.zip, or when you want to validate a patch by replaying a recorded session against it via record.
 ---
 
-# build-wpc-rom
+# build
 
-Applies ordered JSON patch specs to a WPC game ROM, recalculates the WPC 16-bit checksum, and repackages the ROM zip. The output drops into VP's `roms/` directory for immediate testing via `record-pinball`'s single-sided `replay.py`.
+Applies ordered JSON patch specs to a WPC game ROM, recalculates the WPC 16-bit checksum, and repackages the ROM zip. The output drops into VP's `roms/` directory for immediate testing via `record`'s single-sided `replay.py`.
 
 ## When to invoke
 
@@ -18,16 +18,16 @@ Applies ordered JSON patch specs to a WPC game ROM, recalculates the WPC 16-bit 
 
 ```bash
 # Build with checksum disabled (safest during development)
-uv run '${CLAUDE_PLUGIN_ROOT}/build.py' --disable-checksum
+uv run '${CLAUDE_PLUGIN_ROOT}/bin/build.py' --disable-checksum
 
 # Build with real checksum, deploy into VP's roms/ dir
-uv run '${CLAUDE_PLUGIN_ROOT}/build.py' --deploy
+uv run '${CLAUDE_PLUGIN_ROOT}/bin/build.py' --deploy
 
 # Validate against a recorded session (single-sided replay against the modded ROM).
 # First time the modded zip changes the WPC checksum word ($FFEE), produce a
 # freshly-reset NVRAM snapshot so the replay doesn't pay the factory-reset cost.
-uv run '${CLAUDE_PLUGIN_ROOT}/init_nvram.py' --rom-zip ./dist/congo_21_modded.zip --force
-uv run '${CLAUDE_PLUGIN_ROOT}/replay.py' \
+uv run '${CLAUDE_PLUGIN_ROOT}/bin/init_nvram.py' --rom-zip ./dist/congo_21_modded.zip --force
+uv run '${CLAUDE_PLUGIN_ROOT}/bin/replay.py' \
     --rom congo_21 --rom-zip ./dist/congo_21_modded.zip \
     --session ./sessions/<UTC> \
     --nvram ./dist/congo_21_modded.nv \
@@ -36,10 +36,10 @@ uv run '${CLAUDE_PLUGIN_ROOT}/replay.py' \
 
 ## Prerequisites
 
-- **`uv`** on PATH (installed by `pinball-setup`). `build.py` is a stdlib-only PEP 723 script — `uv run` provisions the interpreter; no `pip install` needed.
+- **`uv`** on PATH (installed by `setup`). `build.py` is a stdlib-only PEP 723 script — `uv run` provisions the interpreter; no `pip install` needed.
 - **ROM zip** in `./orig/` (or pass `--rom-zip <path>` / `--rom <name>`). The build never modifies `orig/` — it reads the source zip and writes to `dist/`.
 - **Patch specs** in `./source/patches/` (or pass `--patch-dir <path>`). May be empty; the script will still fix the checksum / disable it.
-- **`--deploy` only**: `VPINMAME_DIR` (Windows) / `PINMAME_DIR` (macOS) env var set (run `pinball-setup/setup-pinball.py` once).
+- **`--deploy` only**: `VPINMAME_DIR` (Windows) / `PINMAME_DIR` (macOS) env var set (run the `setup` skill once).
 
 ## Patch spec format
 
@@ -62,7 +62,7 @@ One `.json` file per logical change. Files are sorted by name, so prefix with a 
 | `old_hex` | Recommended | Space-separated hex bytes expected at the location (safety check; build aborts if mismatch) |
 | `new_hex` | Yes | Space-separated hex bytes to write |
 
-Address formats (same as `wpc-investigate rom.py`):
+Address formats (same as `rom.py`):
 
 | Format | Meaning | Example |
 |---|---|---|
@@ -117,20 +117,20 @@ There is no byte-sum cap; any single 16-bit value is a valid delta, so any patch
 ## Workflow: write → build → validate
 
 ```
-1. Identify bytes to patch (wpc-investigate: rom.py dis/xref/funcs/dump/search;
-   wpc-debug: the live debugger for confirming the path)
+1. Identify bytes to patch (debug: rom.py dis/xref/funcs/dump/search;
+   debug: the live debugger for confirming the path)
 2. Write source/patches/NNN-description.json
-3. uv run '${CLAUDE_PLUGIN_ROOT}/build.py' --disable-checksum
-4. uv run '${CLAUDE_PLUGIN_ROOT}/init_nvram.py' \
+3. uv run '${CLAUDE_PLUGIN_ROOT}/bin/build.py' --disable-checksum
+4. uv run '${CLAUDE_PLUGIN_ROOT}/bin/init_nvram.py' \
        --rom-zip ./dist/congo_21_modded.zip --force
-5. uv run '${CLAUDE_PLUGIN_ROOT}/replay.py' \
+5. uv run '${CLAUDE_PLUGIN_ROOT}/bin/replay.py' \
        --rom congo_21 --rom-zip ./dist/congo_21_modded.zip \
        --session ./sessions/<UTC> --nvram ./dist/congo_21_modded.nv \
        --trace state,dmd
 6. Inspect the trace — confirm the patched code ran and produced the intended
    effect (e.g. expected DMD content at expected frames). Optionally run
-   replay/diff_traces.py against a factory run to investigate unintended
-   side effects; see "Two-run comparison" in record-pinball/SKILL.md for the
+   diff_traces.py against a factory run to investigate unintended
+   side effects; see "Two-run comparison" in record/SKILL.md for the
    caveats around NVRAM coupling.
 7. When satisfied: rebuild without --disable-checksum for a clean checksum
 ```
@@ -149,6 +149,7 @@ There is no byte-sum cap; any single 16-bit value is a valid delta, so any patch
 
 ```
 ${CLAUDE_PLUGIN_ROOT}/
-├── SKILL.md   # this file
-└── build.py   # main build script (cross-platform)
+├── skills/build/SKILL.md   # this file
+└── bin/
+    └── build.py            # main build script (cross-platform)
 ```

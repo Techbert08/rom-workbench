@@ -6,7 +6,7 @@
 """Headless libpinmame driver.
 
 Drives libpinmame.dll via ctypes through a SetTimeFence-paced loop. Reads the
-record-pinball session.jsonl and injects switch deltas at their simulated-time
+record session.jsonl and injects switch deltas at their simulated-time
 offsets, then lets libpinmame run the show: it emits events via callbacks
 (solenoid changes, DMD frames, OnState) and via the event-driven debugger
 (breakpoints, watchpoints, step). The host only samples *state* (lamps, GIs)
@@ -805,7 +805,7 @@ def main(argv: list[str]) -> int:
             return int(out.value)
 
         def _loc(pc: int, bank) -> str:
-            # Canonical address form accepted by wpc-investigate/rom.py.
+            # Canonical address form accepted by rom.py.
             if 0x4000 <= pc < 0x8000 and bank is not None:
                 return f"${pc:04X}@p{bank:02X}"
             if pc >= 0x8000:
@@ -904,13 +904,12 @@ def main(argv: list[str]) -> int:
         interactive_stop = {"stop": False}
 
         def _load_disasm():
-            """Import the 6809 disassembler from the sibling wpc-investigate
-            skill so `dis` decodes the *live* instruction stream (correct bank,
-            ground-truth boundaries). Optional: degrades to a hint if absent."""
+            """Import the 6809 disassembler from the sibling rom.py so `dis`
+            decodes the *live* instruction stream (correct bank, ground-truth
+            boundaries). Optional: degrades to a hint if absent."""
             try:
                 import importlib.util
-                rp = (Path(__file__).resolve().parent.parent.parent
-                      / "wpc-investigate" / "rom.py")
+                rp = Path(__file__).resolve().parent / "rom.py"
                 spec = importlib.util.spec_from_file_location("wpc_rom", rp)
                 mod = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(mod)
@@ -999,7 +998,7 @@ def main(argv: list[str]) -> int:
             def do_dis(addr: int, count: int, bank) -> str:
                 if dism is None:
                     return ("(live disassembler unavailable; use "
-                            "wpc-investigate/rom.py dis '$%04X@p%s')"
+                            "rom.py dis '$%04X@p%s')"
                             % (addr, f"{bank:02X}" if bank is not None else "??"))
                 # Decode from ROM image for banked/system code (faithful, correct
                 # bank); branch targets use logical addr + bank.

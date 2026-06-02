@@ -128,9 +128,9 @@ def diff_dmd(a_dir: Path, b_dir: Path) -> dict:
 
 
 def render_html(report: dict) -> str:
-    parts = ["<!doctype html><meta charset=utf-8><title>record-pinball diff</title>"]
+    parts = ["<!doctype html><meta charset=utf-8><title>record diff</title>"]
     parts.append("<style>body{font:14px/1.4 system-ui;margin:2em}h2{margin-top:2em}pre{background:#f6f6f6;padding:8px;overflow:auto;max-height:60vh}.ok{color:#0a0}.bad{color:#a00}</style>")
-    parts.append("<h1>record-pinball diff</h1>")
+    parts.append("<h1>record diff</h1>")
     parts.append(f"<p>A: <code>{html.escape(str(report['a']))}</code></p>")
     parts.append(f"<p>B: <code>{html.escape(str(report['b']))}</code></p>")
     for section, data in report["sections"].items():

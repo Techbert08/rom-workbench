@@ -60,7 +60,7 @@ def env_var(name: str) -> str:
     v = os.environ.get(name) or ""
     if not v:
         raise SystemExit(
-            f"{name} not set. Run pinball-setup/setup-pinball.py first."
+            f"{name} not set. Run the setup skill (setup-pinball.py) first."
         )
     return v
 
@@ -110,7 +110,7 @@ def main() -> int:
             print("    Synthesised stub session (no input events)")
 
         print(f"==> Booting {rom} from blank NVRAM for {args.duration_sec}s")
-        host_script = Path(__file__).parent / "replay" / "replay_host.py"
+        host_script = Path(__file__).parent / "replay_host.py"
         cmd = [
             sys.executable, str(host_script),
             "--pinmame-dir", pinmame_dir,

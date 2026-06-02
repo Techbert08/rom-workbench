@@ -1,12 +1,12 @@
 ---
-name: synthetic-recording
-description: Author a replayable Williams (WPC) pinball session by hand — no Visual Pinball, no physics — by emitting the switch-edge stream that drives the ROM into a chosen state, then replay it headlessly via record-pinball. Use to synthesize a deterministic test case (start a ball, spell a target bank, trigger and re-trigger a mode, force an edge case) when capturing it live would be tedious or non-reproducible.
+name: synthetic-record
+description: Author a replayable Williams (WPC) pinball session by hand — no Visual Pinball, no physics — by emitting the switch-edge stream that drives the ROM into a chosen state, then replay it headlessly via record. Use to synthesize a deterministic test case (start a ball, spell a target bank, trigger and re-trigger a mode, force an edge case) when capturing it live would be tedious or non-reproducible.
 ---
 
-# synthetic-recording
+# synthetic-record
 
 A recorded session is nothing but a `session.jsonl` of switch edges
-(`{"t":<emu-sec>,"n":<sw#>,"on":0|1,"kind":"switch"}`) that `record-pinball`'s
+(`{"t":<emu-sec>,"n":<sw#>,"on":0|1,"kind":"switch"}`) that `record`'s
 `replay.py` injects into libpinmame with `PinmameSetSwitch`. Visual Pinball is
 just one way to *produce* that stream. This skill **synthesizes** it: you feed
 the ROM a plausible switch stream by hand and it drives the game into whatever
@@ -28,8 +28,8 @@ state you want.
 
 Output is a normal session directory, so everything downstream
 (`replay.py`, `render_dmd_video.py`, `diff_traces.py`, the `Dbg` trace) works
-unchanged. For *capturing* a real session use `record-pinball`; for driving the
-live debugger use `wpc-debug`.
+unchanged. For *capturing* a real session use `record`; for driving the
+live debugger use `debug`.
 
 ## The two hard parts
 
@@ -75,7 +75,16 @@ authority for the switch you care about:
 2. **The table VBScript** (`orig/<table>.vbs`) — maps physical playfield objects
    to the switch numbers the ROM reads (`Controller.Switch(n)` /
    `vpmTimer.PulseSw n`), so it covers the targets the driver omits, but its
-   human labels are sparse.
+   human labels are sparse. Extract it from the table once:
+
+   ```bash
+   # macOS / Linux
+   VPinballX_GL --extractvbs orig/<table>.vpx      # writes orig/<table>.vbs
+   # Windows
+   VPinballX.exe -ExtractVBS orig\<table>.vpx
+   ```
+
+   Then grep the `.vbs` for `Controller.Switch(` / `PulseSw` to read the wiring.
 3. **Empirical, from a real recording** — the definitive answer to "which
    switch *does* X". Replay a session that exercised the feature with a
    `--watch-w` on the RAM the feature touches, and read the switch edge that
@@ -90,6 +99,8 @@ future scenarios read `pulse("travi")` not `pulse(51)`.
 ## The builder API (`synth.py`)
 
 ```python
+import sys
+sys.path.insert(0, "${CLAUDE_PLUGIN_ROOT}/bin")   # so `synth` is importable
 from synth import Session
 s = Session("congo_21", seed_from="sessions/<utc-reference>")
 
@@ -119,20 +130,20 @@ s.write("sessions/<out>", labels=[...], notes="...")
 Validate before replaying:
 
 ```powershell
-uv run ${CLAUDE_PLUGIN_ROOT}/synth.py validate sessions\<out>
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/synth.py validate sessions\<out>
 ```
 
 ## Replay & verify
 
-A synthetic session is a normal session — replay it with `record-pinball`:
+A synthetic session is a normal session — replay it with `record`:
 
 ```powershell
-uv run ..\record-pinball\replay.py --rom <rom> --rom-zip <zip> `
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom <rom> --rom-zip <zip> `
     --session sessions\<out> --nvram <nv> --trace state,dmd,dbg `
     --watch-w 0x<addr> --out-dir sessions\<out>\replays\<stem>\run1 --overwrite
 
 # Eyeball it: render the DMD to a real-time mp4 with burned-in timecode.
-uv run ..\record-pinball\replay\render_dmd_video.py sessions\<out>\replays\<stem>\run1
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/render_dmd_video.py sessions\<out>\replays\<stem>\run1
 ```
 
 Confirm the scenario actually played: watch the RAM that proves the state you
@@ -145,8 +156,9 @@ idle for a timer, tighter keepalive, a different splice cutoff.
 
 ```
 ${CLAUDE_PLUGIN_ROOT}/
-├── SKILL.md                         # this file
-└── synth.py                         # builder library + `validate` CLI
+├── skills/synthetic-record/SKILL.md  # this file
+└── bin/
+    └── synth.py                      # builder library + `validate` CLI
 ```
 
 Switch names are per-game **working-directory** data, not part of the plugin:
@@ -164,6 +176,6 @@ author `./names/<rom>.json` in your project dir as you pin switches (a
   switch for your game) or free play.
 - **Edge-triggered banks** need `alternate`, not `pulse(repeat=…)`.
 - **Idle gaps** > ball-search timeout need `keepalive`.
-- **Pacing/warm-up** is the same closed-loop model as `record-pinball`; see its
+- **Pacing/warm-up** is the same closed-loop model as `record`; see its
   SKILL.md "Determinism / pacing model". Inputs before state==1 are dropped.
 ```

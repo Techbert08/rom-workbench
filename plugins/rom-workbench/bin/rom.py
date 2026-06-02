@@ -63,12 +63,11 @@ def load_rom(path: str) -> bytes:
 
 
 def find_rom(start_dir: str = '.') -> str | None:
-    for base in (start_dir, str(Path(__file__).parent.parent.parent)):
-        orig = Path(base) / 'orig'
-        if orig.is_dir():
-            for f in sorted(orig.iterdir()):
-                if f.suffix.lower() == '.zip':
-                    return str(f)
+    orig = Path(start_dir) / 'orig'
+    if orig.is_dir():
+        for f in sorted(orig.iterdir()):
+            if f.suffix.lower() == '.zip':
+                return str(f)
     return None
 
 

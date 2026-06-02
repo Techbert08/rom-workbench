@@ -7,7 +7,7 @@
 
 Single-sided runner: one ROM, one input session, one NVRAM snapshot in;
 one trace directory out. To compare two runs, do two single-sided runs
-and feed their output dirs to replay/diff_traces.py.
+and feed their output dirs to diff_traces.py.
 
 Trace features (composable via comma-separated --trace):
   state     — solenoids via OnSolenoidUpdated callback, lamps/GIs via
@@ -16,7 +16,7 @@ Trace features (composable via comma-separated --trace):
   dmd       — DMD frames via libpinmame OnDisplayUpdated callback.
   sound     — emulated audio (PCM) via the OnAudio* callbacks; raw s16le
               samples + a timing index. Mux into the DMD video with
-              replay/render_dmd_video.py. Auto-added whenever 'dmd' is
+              render_dmd_video.py. Auto-added whenever 'dmd' is
               requested (so the video has audio); suppress with --no-sound.
   dbg       — event-driven debugger via the libpinmame Debug* API. Set
               --break-pc and/or --watch-r/--watch-w; the emulation
@@ -101,7 +101,7 @@ def env_var(name: str) -> str:
     v = os.environ.get(name) or ""
     if not v:
         raise SystemExit(
-            f"{name} not set. Run pinball-setup/setup-pinball.py first."
+            f"{name} not set. Run the setup skill (setup-pinball.py) first."
         )
     return v
 
@@ -173,7 +173,7 @@ def main() -> int:
     shutil.copy2(nvram, nvram_dir / f"{args.rom}.nv")
 
     # Build the replay_host.py command.
-    host_script = Path(__file__).parent / "replay" / "replay_host.py"
+    host_script = Path(__file__).parent / "replay_host.py"
     cmd: list[str] = [
         sys.executable, str(host_script),
         "--pinmame-dir", pinmame_dir,
@@ -212,7 +212,7 @@ def main() -> int:
     print(f"  OutDir: {out_dir}")
     print()
     print("To compare against another run:")
-    diff_script = Path(__file__).parent / "replay" / "diff_traces.py"
+    diff_script = Path(__file__).parent / "diff_traces.py"
     print(f"  uv run {diff_script} \\")
     print(f"      --a <other-outdir> --b {out_dir} --out <diff-outdir>")
     return 0

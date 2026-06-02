@@ -366,8 +366,8 @@ def main() -> int:
         env_name = "VPINMAME_DIR" if IS_WIN else "PINMAME_DIR"
         rom_root = os.environ.get(env_name)
         if not rom_root:
-            warn(f"{env_name} not set; skipping deploy. Run pinball-setup/"
-                 "setup-pinball.py first.")
+            warn(f"{env_name} not set; skipping deploy. Run the setup skill "
+                 "(setup-pinball.py) first.")
         else:
             dest = Path(rom_root) / "roms" / f"{rom_stem}_modded.zip"
             dest.parent.mkdir(parents=True, exist_ok=True)

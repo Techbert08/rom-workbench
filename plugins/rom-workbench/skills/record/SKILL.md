@@ -1,14 +1,14 @@
 ---
-name: record-pinball
-description: Capture a Williams pinball gameplay session in Visual Pinball + VPinMAME, then replay it headlessly against a single ROM (factory or modded) from an explicit NVRAM snapshot, with selectable trace features — state events (lamps/solenoids/GIs), DMD frames, emulated game audio (PCM, muxable into the DMD video), and an event-driven CPU debugger (breakpoints, watchpoints, single-step) for the wpc-investigate skill. Use to record gameplay, produce NVRAM snapshots, or replay a session against a ROM to inspect (or diff) the produced traces.
+name: record
+description: Capture a Williams pinball gameplay session in Visual Pinball + VPinMAME, then replay it headlessly against a single ROM (factory or modded) from an explicit NVRAM snapshot, with selectable trace features — state events (lamps/solenoids/GIs), DMD frames, emulated game audio (PCM, muxable into the DMD video), and an event-driven CPU debugger (breakpoints, watchpoints, single-step) for the debug skill. Use to record gameplay, produce NVRAM snapshots, or replay a session against a ROM to inspect (or diff) the produced traces.
 ---
 
-# record-pinball
+# record
 
 Records and replays Williams pinball gameplay sessions. The replay path is
 **event-driven** — libpinmame and our patched debugger emit callbacks, and
 `replay.py` writes them out. The `Dbg` trace is the in-process CPU
-debugger that `wpc-investigate` uses; it lives here because the replay
+debugger that `debug` uses; it lives here because the replay
 infrastructure (sessions + NVRAM snapshots) is the substrate it runs on.
 
 1. **Record a session** that reaches an in-game state of interest (multiball
@@ -24,40 +24,40 @@ infrastructure (sessions + NVRAM snapshots) is the substrate it runs on.
 - "replay this session", "replay against the modded ROM"
 - "validate this mod" / "diff the factory vs modded trace"
 - "make an NVRAM snapshot for this ROM" / "init nvram"
-- "set a breakpoint on $D9A6 and tell me what A is" (Dbg trace; see also `wpc-investigate`)
+- "set a breakpoint on $D9A6 and tell me what A is" (Dbg trace; see also `debug`)
 
-For first-time machine setup, use the **`pinball-setup`** skill instead. For static analysis and the investigation workflow that *uses* the `Dbg` trace,
-use **`wpc-investigate`**.
+For first-time machine setup, use the **`setup`** skill instead. For static analysis and the investigation workflow that *uses* the `Dbg` trace,
+use **`debug`**.
 
 ## Quickstart
 
-Assumes you've already run `pinball-setup/setup-pinball.py`. Work from a game
+Assumes you've already run the `setup` skill. Work from a game
 directory laid out by convention — ROM zip at `.\orig\<rom>.zip` (or
 `.\dist\<rom>.zip`), table at `.\tables\<rom>.vpx`. From a PowerShell 7 prompt:
 
 ```powershell
 # Record a session. Finds the ROM/table for --rom by convention. Press Ctrl-C to stop.
-uv run '${CLAUDE_PLUGIN_ROOT}/record.py' --rom congo_21
+uv run '${CLAUDE_PLUGIN_ROOT}/bin/record.py' --rom congo_21
 
 # One-time per ROM zip: produce a freshly-reset NVRAM snapshot so replays
 # don't pay the boot-time factory-reset cost and start from explicit state.
-uv run ${CLAUDE_PLUGIN_ROOT}/init_nvram.py --rom-zip .\orig\congo_21.zip         # -> .\orig\congo_21.nv
-uv run ${CLAUDE_PLUGIN_ROOT}/init_nvram.py --rom-zip .\dist\congo_21_modded.zip  # -> .\dist\congo_21_modded.nv
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/init_nvram.py --rom-zip .\orig\congo_21.zip         # -> .\orig\congo_21.nv
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/init_nvram.py --rom-zip .\dist\congo_21_modded.zip  # -> .\dist\congo_21_modded.nv
 
 # Replay headlessly against a single ROM with just the state-event timeline.
-uv run ${CLAUDE_PLUGIN_ROOT}/replay.py --rom congo_21 --rom-zip .\orig\congo_21.zip `
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom congo_21 --rom-zip .\orig\congo_21.zip `
     --session .\sessions\<utc> --nvram .\orig\congo_21.nv --trace state
 
 # Investigate a code path with the in-process CPU debugger.
-uv run ${CLAUDE_PLUGIN_ROOT}/replay.py --rom congo_21 --rom-zip .\dist\congo_21_modded.zip `
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom congo_21 --rom-zip .\dist\congo_21_modded.zip `
     --session .\sessions\<utc> --nvram .\orig\congo_21.nv `
     --trace state,dbg --break-pc 0xD9A6 --dbg-step-after 80
 
 # Validate a mod: run the same session against the modded ROM, then (optionally)
 # diff the two trace dirs.
-uv run ${CLAUDE_PLUGIN_ROOT}/replay.py --rom congo_21 --rom-zip .\dist\congo_21_modded.zip `
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom congo_21 --rom-zip .\dist\congo_21_modded.zip `
     --session .\sessions\<utc> --nvram .\dist\congo_21_modded.nv --trace state,dmd
-uv run ${CLAUDE_PLUGIN_ROOT}/replay/diff_traces.py `
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/diff_traces.py `
     --a .\sessions\<utc>\replays\congo_21\<utc> `
     --b .\sessions\<utc>\replays\congo_21_modded\<utc> `
     --out .\sessions\<utc>\replays\diff
@@ -68,7 +68,7 @@ directory — they live next to whatever repo you ran from.
 
 ## Prerequisites
 
-This skill expects `pinball-setup` to have run successfully — that's where
+This skill expects `setup` to have run successfully — that's where
 the toolchain, env vars (`PINMAME_DIR`, `VPINBALL_DIR`, `VPINMAME_DIR`),
 and patched DLLs come from. Specifically needed:
 
@@ -77,13 +77,13 @@ and patched DLLs come from. Specifically needed:
 - A game working dir with the ROM zip at `.\orig\<rom>.zip` (or `.\dist\<rom>.zip`)
   and the table at `.\tables\<rom>.vpx`. `record.py` stages the ROM into VP's
   `roms/` dir itself, just before launch.
-- `uv` on PATH (installed by `pinball-setup`). Every Python tool here runs via
+- `uv` on PATH (installed by `setup`). Every Python tool here runs via
   `uv run`, which provisions a matching interpreter and each script's declared
   dependencies (e.g. Pillow for DMD rendering) into an ephemeral environment —
   no manual `pip install` is ever needed.
 
 If a script complains "PINMAME_DIR not set" or similar, point at
-`pinball-setup`.
+`setup`.
 
 ## Recording: what `record.py` does
 
@@ -91,7 +91,7 @@ If a script complains "PINMAME_DIR not set" or similar, point at
 right Visual Pinball binary for the OS and both produce an identical `session.jsonl`.
 
 ```bash
-uv run '${CLAUDE_PLUGIN_ROOT}/record.py' \
+uv run '${CLAUDE_PLUGIN_ROOT}/bin/record.py' \
     [--rom congo_21] \                     # default: congo_21
     [--rom-zip '<path-to-zip>'] \          # default: ./orig/<rom>.zip, then ./dist/<rom>.zip
     [--table '<path-to-vpx>'] \            # default: ./tables/<rom>.vpx
@@ -110,7 +110,7 @@ Launches Visual Pinball with the full table. The patched VPinMAME DLL (`VPinMAME
 ## NVRAM init: `init_nvram.py`
 
 ```powershell
-uv run ${CLAUDE_PLUGIN_ROOT}/init_nvram.py `
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/init_nvram.py `
     --rom-zip '<path-to-rom-zip>' `       # required
     [--rom <name>] `                      # default: zip stem with _modded/_mod stripped
     [--out '<path>'] `                    # default: <dir-of-rom-zip>\<zip-stem>.nv
@@ -126,7 +126,7 @@ The snapshot is keyed by ROM zip, so factory and modded ROMs get distinct cached
 ## Replay: `replay.py`
 
 ```powershell
-uv run ${CLAUDE_PLUGIN_ROOT}/replay.py `
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/replay.py `
     --rom <name> `                            # required, e.g. congo_21
     --rom-zip '<path-to-rom-zip>' `           # required: factory or modded zip
     --session '<sessions/...>' `              # required: dir with session.jsonl
@@ -158,7 +158,7 @@ carries:
 
 - **`bank`** — the live ROM page, read from the WPC bank shadow at
   `(DP<<8)+0x11`. Combined with the PC it yields **`loc`** (e.g. `$42C6@p39`),
-  which you paste straight into `wpc-investigate/rom.py dump`.
+  which you paste straight into `rom.py dump`.
 - **`mem`** — optional windows requested with `--dbg-mem`, read via
   `PinmameReadMainCPUByte` while the CPU is frozen. Each comma item is either
   a fixed address `0xADDR[:LEN]` or a **register-relative** read
@@ -262,18 +262,18 @@ commands.
 
 ```powershell
 # Launch in the background; it stays alive serving the control socket.
-uv run ${CLAUDE_PLUGIN_ROOT}/replay.py --rom congo_21 `
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom congo_21 `
     --rom-zip .\dist\congo_21_modded.zip --session .\sessions\<utc> `
     --nvram .\dist\congo_21_modded.nv `
     --interactive --break-pc 0x4037 [--dbg-port 47655]
 # Wait for "[dbg] paused at <loc>" in its output, then drive it with dbg.py:
-uv run ${CLAUDE_PLUGIN_ROOT}/dbg.py regs
-uv run ${CLAUDE_PLUGIN_ROOT}/dbg.py dis @pc 12
-uv run ${CLAUDE_PLUGIN_ROOT}/dbg.py mem @u 24
-uv run ${CLAUDE_PLUGIN_ROOT}/dbg.py step 20
-uv run ${CLAUDE_PLUGIN_ROOT}/dbg.py continue until 0x4067
-uv run ${CLAUDE_PLUGIN_ROOT}/dbg.py wp add w 0x1670
-uv run ${CLAUDE_PLUGIN_ROOT}/dbg.py quit          # stops the emulator, ends the session
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py regs
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py dis @pc 12
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py mem @u 24
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py step 20
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py continue until 0x4067
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py wp add w 0x1670
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py quit          # stops the emulator, ends the session
 ```
 
 Commands: `regs | mem <addr> [len] | dis [addr] [n] | step [n] |
@@ -287,7 +287,7 @@ is expected: `0xNNNN`, `$NNNN`, `NNNN` (hex), or register-relative `@X`, `@S+2`,
 - The host writes `<out>/dbg.session.json` with the port + pid; `dbg.py`
   auto-discovers the port from the most recent one, so `--port` is optional.
 - `dis` decodes the **live** instruction stream via the sibling
-  `wpc-investigate/rom.py` disassembler. Two caveats: (1) banked `$4000-$7FFF`
+  `rom.py` disassembler. Two caveats: (1) banked `$4000-$7FFF`
   bytes are read from the ROM image at `page=bank` because
   `PinmameReadMainCPUByte` doesn't apply the WPC bank there; (2) `dis <addr>`
   uses the *current* bank, so to decode a different page use static
@@ -297,12 +297,12 @@ Implementation: `replay_host.py --interactive` swaps the auto-continue worker fo
 a socket-served control thread that owns the `Debug*` API; the main fence loop
 keeps the emulator alive while the CPU is frozen between commands.
 
-## Two-run comparison: `replay/diff_traces.py`
+## Two-run comparison: `diff_traces.py`
 
 Two single-sided runs can be compared after the fact:
 
 ```powershell
-uv run ${CLAUDE_PLUGIN_ROOT}/replay/diff_traces.py `
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/diff_traces.py `
     --a '<run-A-OutDir>' --b '<run-B-OutDir>' `
     --out '<diff-OutDir>'
 ```
@@ -342,28 +342,28 @@ sessions/<utc>/
 `<OutDir>/dmd/NNNNNN.bin` (1 byte per pixel; libpinmame upsamples the WPC
 2-bit DMD to 8 bits for portability) plus metadata in `<OutDir>/dmd.index.jsonl`.
 
-To eyeball them, use `replay/render_dmd.py` (Pillow required):
+To eyeball them, use `render_dmd.py` (Pillow required):
 
 ```powershell
 # All frames -> <replay-OutDir>/dmd_png/
-uv run ${CLAUDE_PLUGIN_ROOT}/replay/render_dmd.py <replay-OutDir>
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/render_dmd.py <replay-OutDir>
 
 # Just frames 0, 5, 10..20 at 4x upscale
-uv run ${CLAUDE_PLUGIN_ROOT}/replay/render_dmd.py <replay-OutDir> --frames 0,5,10-20 --scale 4
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/render_dmd.py <replay-OutDir> --frames 0,5,10-20 --scale 4
 
 # Custom output dir
-uv run ${CLAUDE_PLUGIN_ROOT}/replay/render_dmd.py <replay-OutDir> --out my_pngs
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/render_dmd.py <replay-OutDir> --out my_pngs
 ```
 
 Default scale is 4x (so the standard 128x32 DMD becomes 512x128) using
 nearest-neighbour, which keeps the dot grid crisp for reading text.
 
 For a **watchable movie** (resampled to real-time playback, with a burned-in
-timecode that matches the trace/switch-log `t`), use `replay/render_dmd_video.py`
+timecode that matches the trace/switch-log `t`), use `render_dmd_video.py`
 (Pillow required; encodes H.264 mp4 via ffmpeg, falls back to GIF):
 
 ```powershell
-uv run ${CLAUDE_PLUGIN_ROOT}/replay/render_dmd_video.py <replay-OutDir> [--fps 30] [--scale 6]
+uv run ${CLAUDE_PLUGIN_ROOT}/bin/render_dmd_video.py <replay-OutDir> [--fps 30] [--scale 6]
 # -> <replay-OutDir>/dmd.mp4
 ```
 
@@ -413,9 +413,9 @@ for the relevant label first.
 For a typical mod-validation workflow:
 
 1. **Identify the moment of interest.** Decide what gameplay event the mod targets (e.g. "left ramp 10 times in a row triggers extra ball"). Record a session in VpRecord mode (the default) that reaches and exercises this event.
-2. **Pin down the code path on the factory ROM.** Once per ROM zip: `init_nvram.py --rom-zip .\orig\<rom>.zip` to make `<rom>.nv`. Then `replay.py --rom <rom> --rom-zip .\orig\<rom>.zip --session ... --nvram .\orig\<rom>.nv --trace state,dmd` and inspect `trace.state.jsonl` for the lamps/solenoids that fire during the event. Use `wpc-investigate\rom.py xref` to find memory references that write those lamp/solenoid addresses — those are your candidate functions.
+2. **Pin down the code path on the factory ROM.** Once per ROM zip: `init_nvram.py --rom-zip .\orig\<rom>.zip` to make `<rom>.nv`. Then `replay.py --rom <rom> --rom-zip .\orig\<rom>.zip --session ... --nvram .\orig\<rom>.nv --trace state,dmd` and inspect `trace.state.jsonl` for the lamps/solenoids that fire during the event. Use `rom.py xref` to find memory references that write those lamp/solenoid addresses — those are your candidate functions.
 3. **Pin the exact code with the debugger.** Re-run with `--trace state,dbg --watch-w '<addrs>'` to find every PC that writes the candidate addresses, or `--break-pc '<entry-pc>' --dbg-step-after 50` to walk a routine's prologue. Each hit captures a full register snapshot at the exact instruction; no polling, no missed events.
-4. **Make the mod.** Patch the ROM byte(s) (via `build-wpc-rom`) to produce `dist\<rom>_modded.zip` whose internal layout matches the factory zip.
+4. **Make the mod.** Patch the ROM byte(s) (via `build`) to produce `dist\<rom>_modded.zip` whose internal layout matches the factory zip.
 5. **Validate.** `init_nvram.py --rom-zip .\dist\<rom>_modded.zip --force` for the modded NVRAM, then re-run `replay.py` against the modded ROM+NVRAM with the same `--session`. Inspect the modded trace directly for the intended effect (e.g. expected DMD content at expected frames). If the patch should have *no* effect on a particular code path, `diff_traces.py` can confirm — bearing in mind the caveats in "Two-run comparison" above.
 
 ## Known limits
@@ -423,32 +423,32 @@ For a typical mod-validation workflow:
 - **VP physics is not bit-deterministic.** A recorded session captures the **switch-edge stream VP wrote into VPM** (the `switchlog.jsonl` / `kind:"switch"` records), not the keystrokes that caused it. Re-running VP would not reproduce the same session. The skill never re-runs VP at replay time; switches go directly into libpinmame via `PinmameSetSwitch`.
 - **Time keys are simulated seconds, not CPU cycles** (no cycle counter is exported by either libpinmame or VPM). Two-ROM diffs therefore align by event index, not by `t`.
 - **Switch capture is edge-triggered at the `vp_putSwitch` chokepoint**, so every switch transition VP issues is logged with no polling window to miss it (this replaced an earlier per-frame `swMatrix`-diff recorder). A genuine input timing floor remains the emulation clock's resolution, but recorded edges are faithful to what VP drove.
-- **DMD frames are stored as raw `.bin`**, not PNG, to keep the replay itself free of image-library dependencies. Width/height/bits-per-pixel live in `dmd.index.jsonl`. Render to PNG with `replay/render_dmd.py` (needs Pillow); see "Inspecting DMD frames" above.
+- **DMD frames are stored as raw `.bin`**, not PNG, to keep the replay itself free of image-library dependencies. Width/height/bits-per-pixel live in `dmd.index.jsonl`. Render to PNG with `render_dmd.py` (needs Pillow); see "Inspecting DMD frames" above.
 
 ## File layout
 
 ```
 ${CLAUDE_PLUGIN_ROOT}/
-├── SKILL.md                          # this file
-├── record.py                        # session capture — launches VP, cross-platform (macOS + Windows)
-├── init_nvram.py                     # produce a freshly-reset NVRAM snapshot per ROM zip
-├── replay.py                         # single-sided headless replay (+ --interactive)
-├── dbg.py                            # thin client for the --interactive debugger socket
+├── skills/record/SKILL.md            # this file
 ├── bin/
-│   ├── VPinMAME64.dll                # patched VPinMAME — VPINMAME_SWITCHLOG switch-edge recorder (Windows record.py)
-│   ├── libpinmame.dylib              # patched libpinmame — VPINMAME_SWITCHLOG recorder (macOS record.py) + replay
-│   └── libpinmame.dll                # patched libpinmame (Windows) — used by replay_host.py
-├── replay/
+│   ├── record.py                     # session capture — launches VP, cross-platform (macOS + Windows)
+│   ├── init_nvram.py                 # produce a freshly-reset NVRAM snapshot per ROM zip
+│   ├── replay.py                     # single-sided headless replay (+ --interactive)
+│   ├── dbg.py                        # thin client for the --interactive debugger socket
 │   ├── replay_host.py                # libpinmame ctypes driver — event-driven; spawns
 │   │                                 #   a worker thread that blocks on PinmameDebugWait.
 │   │                                 #   --interactive: socket-served frozen-CPU REPL
 │   ├── diff_traces.py                # compare two replay output dirs (investigative)
 │   ├── render_dmd.py                 # DMD .bin frames -> PNG stills (Pillow)
 │   └── render_dmd_video.py           # DMD .bin frames -> real-time mp4 w/ timecode + muxed sound-trace audio (Pillow+ffmpeg)
-└── schemas/                         # informational JSON Schemas (nothing validates against them at runtime)
+├── lib/
+│   ├── VPinMAME64.dll                # patched VPinMAME — VPINMAME_SWITCHLOG switch-edge recorder (Windows record.py)
+│   ├── libpinmame.dylib              # patched libpinmame — VPINMAME_SWITCHLOG recorder (macOS record.py) + replay
+│   └── libpinmame.dll                # patched libpinmame (Windows) — used by replay_host.py
+└── schemas/                          # informational JSON Schemas (nothing validates against them at runtime)
     ├── session.schema.json           # session.jsonl contract (record.py output)
     ├── trace.schema.json             # replay trace-output contract
-    └── names.schema.json             # ./names/<rom>.json switch-name map (working-dir, synthetic-recording)
+    └── names.schema.json             # ./names/<rom>.json switch-name map (working-dir, synthetic-record)
 ```
 
 `record.py` is one cross-platform recorder: it picks the right Visual Pinball
@@ -461,7 +461,7 @@ orchestrating `replay_host.py`.
 ## References
 
 - libpinmame header (upstream): https://github.com/vpinball/pinmame/blob/master/src/libpinmame/libpinmame.h
-- Our patched PinMAME source: the **`switch-recorder` branch off `github.com/vpinball/pinmame`** (`src/libpinmame/libpinmame.{h,cpp}`) — adds the `PinmameDebug*` API and the m6809 dispatch-loop / RM/WM hooks, the `vp_putSwitch` switch recorder (`VPINMAME_SWITCHLOG`), and the closed-loop pacing exports `PinmameGetEmulationTime`/`PinmameTimeFenceReached` (backed by `time_fence_published_time` in `cpuexec.c` and helpers in `wpc/vpintf.c`). **The prebuilt DLLs ship in `bin/` and are all you need for replay + debug of any WPC game — the source is only required to rebuild/extend them.** To rebuild: the patch set is vendored in **`pinmame-patches/`** (3 `git am`-able patches + a README with the pinned upstream base commit and apply/build steps). Clone upstream at that base, `git am` the patches, build (`pinmame_shared.vcxproj` under `build/libpinmame/` → `Release/pinmame64.dll`, stored in `bin/` under the canonical name `libpinmame.dll`; the VP-side recorder is `build/vpinmame/vpinmame.vcxproj` → `VPinMAME64.dll`), then copy the DLL into `bin/` AND re-run `pinball-setup/setup-pinball.py` to deploy — forgetting the deploy makes the wrapper silently fall back to the unpatched DLL.
+- Our patched PinMAME source: the **`switch-recorder` branch off `github.com/vpinball/pinmame`** (`src/libpinmame/libpinmame.{h,cpp}`) — adds the `PinmameDebug*` API and the m6809 dispatch-loop / RM/WM hooks, the `vp_putSwitch` switch recorder (`VPINMAME_SWITCHLOG`), and the closed-loop pacing exports `PinmameGetEmulationTime`/`PinmameTimeFenceReached` (backed by `time_fence_published_time` in `cpuexec.c` and helpers in `wpc/vpintf.c`). **The prebuilt DLLs ship in `lib/` and are all you need for replay + debug of any WPC game — the source is only required to rebuild/extend them.** To rebuild: the patch set is vendored in **`pinmame-patches/`** (3 `git am`-able patches + a README with the pinned upstream base commit and apply/build steps). Clone upstream at that base, `git am` the patches, build (`pinmame_shared.vcxproj` under `build/libpinmame/` → `Release/pinmame64.dll`, stored in `lib/` under the canonical name `libpinmame.dll`; the VP-side recorder is `build/vpinmame/vpinmame.vcxproj` → `VPinMAME64.dll`), then copy the DLL into `lib/` AND re-run the `setup` skill to deploy — forgetting the deploy makes the wrapper silently fall back to the unpatched DLL.
 - PinMAME releases: https://github.com/vpinball/pinmame/releases
 - Visual Pinball X releases: https://github.com/vpinball/vpinball/releases
 - VPinMAME COM interface notes: https://github.com/tanseydavid/WPCResources/blob/master/PinMAME/pinmame-debugger-help.md

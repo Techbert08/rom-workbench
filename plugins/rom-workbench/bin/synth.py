@@ -4,10 +4,10 @@
 # dependencies = []
 # ///
 """
-synthetic-recording: author a *replayable* WPC switch-event session by hand.
+synthetic-record: author a *replayable* WPC switch-event session by hand.
 
 A recorded session is just a `session.jsonl` of switch edges
-(`{"t":<emu-sec>,"n":<sw#>,"on":0|1,"kind":"switch"}`) that `record-pinball`'s
+(`{"t":<emu-sec>,"n":<sw#>,"on":0|1,"kind":"switch"}`) that `record`'s
 `replay.py` injects via `PinmameSetSwitch`. There is nothing magic about it
 having come from Visual Pinball — so we can *synthesize* one: feed the ROM a
 plausible switch stream that drives it into a chosen state, with no VP and no
@@ -235,7 +235,7 @@ class Session:
             "synthetic": True,
             "seed_from": self.seed_from,
             "start_ts": _now_iso(),
-            "comment": "Hand-authored by synthetic-recording/synth.py",
+            "comment": "Hand-authored by synthetic-record/synth.py",
         }
         sess = out / "session.jsonl"
         with sess.open("w", encoding="utf-8", newline="\n") as f:
@@ -306,7 +306,7 @@ def validate(session_dir: Path) -> int:
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="synthetic-recording tools")
+    ap = argparse.ArgumentParser(description="synthetic-record tools")
     sub = ap.add_subparsers(dest="cmd", required=True)
     v = sub.add_parser("validate", help="sanity-check a synthetic session dir")
     v.add_argument("session_dir", type=Path)

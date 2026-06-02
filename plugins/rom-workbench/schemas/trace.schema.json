@@ -1,7 +1,7 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://github.com/Techbert08/rom-workbench/record-pinball/trace.schema.json",
-    "title": "record-pinball replay trace output records",
+    "$id": "https://github.com/Techbert08/rom-workbench/record/trace.schema.json",
+    "title": "record replay trace output records",
     "description": "Records emitted by trace_state.py, trace_memwatch.py, trace_dmd.py, and the parsed form of trace_cputrace.py. Each trace file is JSONL; the first record MUST be a trace_meta. Times are simulated-seconds from PinmameRun, matching session.jsonl `t`.",
     "oneOf": [
         {

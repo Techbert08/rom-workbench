@@ -1,11 +1,11 @@
 ---
-name: pinball-setup
-description: One-time installer for the WPC mod toolchain — Visual Pinball X + PinMAME + VPinMAME + the patched libpinmame (for record-pinball). Use only on first machine setup or when reinstalling a single component. Not needed for day-to-day mod work.
+name: setup
+description: One-time installer for the WPC mod toolchain — Visual Pinball X + PinMAME + VPinMAME + the patched libpinmame (for record). Use only on first machine setup or when reinstalling a single component. Not needed for day-to-day mod work.
 ---
 
-# pinball-setup
+# setup
 
-One-time install. Once setup runs successfully, day-to-day work doesn't need this skill loaded — `wpc-investigate` and `record-pinball` use the installed components directly.
+One-time install. Once setup runs successfully, day-to-day work doesn't need this skill loaded — `debug` and `record` use the installed components directly.
 
 ## When to invoke
 
@@ -58,10 +58,10 @@ old `setup-pinball.sh` / `setup-pinball.ps1` pair). Run it with either Python or
 
 ```bash
 # Fresh machine (no uv yet): plain Python — it installs uv, then the tools.
-python3 '${CLAUDE_PLUGIN_ROOT}/setup-pinball.py' [--force] [--install-root <dir>] [--pinmame-src <path>]
+python3 '${CLAUDE_PLUGIN_ROOT}/bin/setup-pinball.py' [--force] [--install-root <dir>] [--pinmame-src <path>]
 
 # Once uv is available, the uv-native invocation works too:
-uv run '${CLAUDE_PLUGIN_ROOT}/setup-pinball.py'
+uv run '${CLAUDE_PLUGIN_ROOT}/bin/setup-pinball.py'
 ```
 
 Everything installs under a **per-user data directory** (no admin needed for the
@@ -81,7 +81,7 @@ Steps:
 2. **Visual Pinball X** — download + install into `<root>/vpinball/` (skips gracefully if the pinned release has no asset for this OS/arch; replay doesn't need VPX).
 3. **Patched libpinmame** — deploy the prebuilt patched library from `bin/` into `<root>/pinmame/` (replay loads it via ctypes; it's self-contained, so nothing is downloaded).
    - **macOS** — install `libpinmame.dylib` (prefer the arch-matched prebuilt in `bin/`; otherwise build from `--pinmame-src`, default `../pinmame` beside the repo). Also deploy it into the VPX bundle, ad-hoc re-sign, and run a Gatekeeper trial-launch.
-   - **Windows** — copy `bin/libpinmame.dll` into `<root>/pinmame/`. Then download VPinMAME COM into `<root>/vpinmame/` (for `bass64.dll` + the layout), deploy the patched `VPinMAME64.dll`, and `regsvr32`-register it (needs an elevated shell once — the script detects this and prints the exact relaunch command rather than failing).
+   - **Windows** — copy `lib/libpinmame.dll` into `<root>/pinmame/`. Then download VPinMAME COM into `<root>/vpinmame/` (for `bass64.dll` + the layout), deploy the patched `VPinMAME64.dll`, and `regsvr32`-register it (needs an elevated shell once — the script detects this and prints the exact relaunch command rather than failing).
 4. **Persist env vars** at user scope: `VPINBALL_DIR`, `PINMAME_DIR`, and (Windows) `VPINMAME_DIR`. On macOS/Linux these are written to `~/.zshenv` and `~/.bash_profile`; on Windows to the user environment (HKCU).
 
 Downloads are SHA-256 verified against a sidecar recorded on first use (trust-on-first-use). To pin upstream hashes, fill in the empty `expected_sha` constants near the top of the script.
@@ -136,7 +136,7 @@ Each game needs **two** files: a ROM zip and a VPX table. Neither is auto-downlo
 
 ## Redeploying the patched DLLs after a rebuild
 
-The patched DLLs ship prebuilt in `record-pinball/bin/` and are sufficient for
+The patched DLLs ship prebuilt in `lib/` and are sufficient for
 day-to-day use — you only rebuild to **extend** them (a new export, a debugger
 tweak). Rebuilding needs the patched PinMAME source: the `switch-recorder`
 branch off `github.com/vpinball/pinmame` (it adds the `PinmameDebug*` API, the
@@ -153,11 +153,11 @@ $PinmameSrc = 'C:\path\to\your\pinmame'   # your local clone of the patched bran
     "$PinmameSrc\build\libpinmame\pinmame_shared.vcxproj" `
     /p:Configuration=Release /p:Platform=x64 /m /nologo
 
-# Copy into the plugin bin/ under the canonical loader name and re-run
+# Copy into the plugin lib/ under the canonical loader name and re-run
 # setup-pinball.py — its deploy step (re)installs the DLL into PINMAME_DIR.
 Copy-Item "$PinmameSrc\build\libpinmame\Release\pinmame64.dll" `
-          ${CLAUDE_PLUGIN_ROOT}\bin\libpinmame.dll -Force
-uv run '${CLAUDE_PLUGIN_ROOT}/setup-pinball.py'
+          ${CLAUDE_PLUGIN_ROOT}\lib\libpinmame.dll -Force
+uv run '${CLAUDE_PLUGIN_ROOT}/bin/setup-pinball.py'
 ```
 
 If you'd rather skip the downloads/env checks entirely, the patched DLL just needs to land on top of the installed one: copy it directly over `%LOCALAPPDATA%\rom-workbench\pinmame\libpinmame*.dll`.
@@ -173,7 +173,7 @@ Python 3.9+ (`python3 setup-pinball.py` will then install uv for you). After tha
 - **One Administrator PowerShell** for the one-time `regsvr32 VPinMAME.dll` step.
 
 ### macOS
-- **cmake 3.25+**, **Xcode Command Line Tools** (`xcode-select --install`), **git** — only needed for the rare libpinmame *source-build* fallback (the prebuilt `bin/libpinmame.dylib` covers the common case). `setup-pinball.py` checks these only when it actually has to build.
+- **cmake 3.25+**, **Xcode Command Line Tools** (`xcode-select --install`), **git** — only needed for the rare libpinmame *source-build* fallback (the prebuilt `lib/libpinmame.dylib` covers the common case). `setup-pinball.py` checks these only when it actually has to build.
 
 `uv` is installed by `setup-pinball.py` if missing and then runs every Python tool — no system Python is needed for day-to-day work.
 
@@ -181,6 +181,11 @@ Python 3.9+ (`python3 setup-pinball.py` will then install uv for you). After tha
 
 ```
 ${CLAUDE_PLUGIN_ROOT}/
-├── SKILL.md                # this file
-└── setup-pinball.py        # cross-platform VP + libpinmame (+ VPinMAME on Windows) installer
+├── skills/setup/SKILL.md   # this file
+├── bin/
+│   └── setup-pinball.py    # cross-platform VP + libpinmame (+ VPinMAME on Windows) installer
+└── lib/                    # prebuilt patched libraries this script deploys
+    ├── libpinmame.dylib    # macOS
+    ├── libpinmame.dll      # Windows
+    └── VPinMAME64.dll      # Windows (VPinMAME COM recorder)
 ```

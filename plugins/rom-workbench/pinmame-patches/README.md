@@ -1,6 +1,6 @@
 # Patched PinMAME source (for rebuilding the bundled libraries)
 
-The prebuilt libraries in `../bin/` (`libpinmame.dylib` for macOS,
+The prebuilt libraries in `../lib/` (`libpinmame.dylib` for macOS,
 `libpinmame.dll` for Windows) are built from upstream PinMAME
 **plus** the three patches in this directory. **You do not need these to *use*
 the tools** — the bundled libraries are game-generic and sufficient for replay +
@@ -39,7 +39,7 @@ failures on macOS/clang.
 ```bash
 cd /path/to/pinmame
 git checkout 3ef424b0a560b08b563a345d1ecd0fa733533eef -b switch-recorder
-git am <repo>/.claude/skills/record-pinball/pinmame-patches/*.patch
+git am <repo>/plugins/rom-workbench/pinmame-patches/*.patch
 
 # cmake -S . requires a CMakeLists.txt at the source root.
 # CMakeLists_libpinmame.txt (added by patch 0001) is the correct entry point.
@@ -49,11 +49,11 @@ cmake -S . -B build_macos -DPLATFORM=macos -DARCH=arm64 \
       -DBUILD_SHARED=ON -DBUILD_STATIC=OFF -DCMAKE_BUILD_TYPE=Release
 cmake --build build_macos --target pinmame_shared -j$(sysctl -n hw.logicalcpu)
 
-# Copy result into skill bin/ (the canonical pre-built for this arch)
-cp build_macos/libpinmame.3.*.dylib <repo>/.claude/skills/record-pinball/bin/libpinmame.dylib
+# Copy result into the plugin lib/ (the canonical pre-built for this arch)
+cp build_macos/libpinmame.3.*.dylib <repo>/plugins/rom-workbench/lib/libpinmame.dylib
 ```
 
-`setup-pinball.py` does all of the above automatically (including the CMakeLists.txt copy/remove) when no pre-built dylib is in `bin/` for the current arch.
+`setup-pinball.py` does all of the above automatically (including the CMakeLists.txt copy/remove) when no pre-built dylib is in `lib/` for the current arch.
 
 ## Rebuild — Windows (x64, MSVC)
 
@@ -63,10 +63,10 @@ $PinmameSrc = 'C:\path\to\your\pinmame'
     "$PinmameSrc\build\libpinmame\pinmame_shared.vcxproj" `
     /p:Configuration=Release /p:Platform=x64 /m /nologo
 
-# The build artifact is named pinmame64.dll; store it under bin/ as the
+# The build artifact is named pinmame64.dll; store it under lib/ as the
 # canonical loader name libpinmame.dll (the name replay_host.py loads).
 Copy-Item "$PinmameSrc\build\libpinmame\Release\pinmame64.dll" `
-          <repo>\plugins\rom-workbench\bin\libpinmame.dll -Force
+          <repo>\plugins\rom-workbench\lib\libpinmame.dll -Force
 ```
 
 ## Status / cleanup
