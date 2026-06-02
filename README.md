@@ -49,6 +49,7 @@ run the named skill or just tell Claude what you want in plain language.
 Run `/rom-workbench:setup`, or just tell Claude "set up my machine for pinball
 modding." This installs a **patched** Visual Pinball X + PinMAME emulator; the
 patch is what lets the toolkit record your gameplay and replay it deterministically.
+The patches applied are in the plugin if you're curious.
 
 > **macOS note:** because setup swaps a patched library into the notarized
 > Visual Pinball bundle, the first launch can warn that the app is "damaged."
@@ -73,6 +74,7 @@ Visual Pinball and hands you the table to play. Controls:
 - **5** — insert a coin
 - **1** — start a game
 - **left / right Shift** — the flippers
+- **enter** - ball plunger
 
 Play through the behavior you care about, then close the window. Claude folds your
 inputs into a replayable session.
