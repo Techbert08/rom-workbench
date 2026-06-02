@@ -438,8 +438,7 @@ ${CLAUDE_PLUGIN_ROOT}/
 ├── bin/
 │   ├── VPinMAME64.dll                # patched VPinMAME — VPINMAME_SWITCHLOG switch-edge recorder (Windows record.py)
 │   ├── libpinmame.dylib              # patched libpinmame — VPINMAME_SWITCHLOG recorder (macOS record.py) + replay
-│   ├── pinmame64.dll                 # patched libpinmame — used by replay_host.py
-│   └── libpinmame.dll                # canonical-name copy of pinmame64.dll (loader alias)
+│   └── libpinmame.dll                # patched libpinmame (Windows) — used by replay_host.py
 ├── replay/
 │   ├── replay_host.py                # libpinmame ctypes driver — event-driven; spawns
 │   │                                 #   a worker thread that blocks on PinmameDebugWait.
@@ -464,7 +463,7 @@ orchestrating `replay_host.py`.
 ## References
 
 - libpinmame header (upstream): https://github.com/vpinball/pinmame/blob/master/src/libpinmame/libpinmame.h
-- Our patched PinMAME source: the **`switch-recorder` branch off `github.com/vpinball/pinmame`** (`src/libpinmame/libpinmame.{h,cpp}`) — adds the `PinmameDebug*` API and the m6809 dispatch-loop / RM/WM hooks, the `vp_putSwitch` switch recorder (`VPINMAME_SWITCHLOG`), and the closed-loop pacing exports `PinmameGetEmulationTime`/`PinmameTimeFenceReached` (backed by `time_fence_published_time` in `cpuexec.c` and helpers in `wpc/vpintf.c`). **The prebuilt DLLs ship in `bin/` and are all you need for replay + debug of any WPC game — the source is only required to rebuild/extend them.** To rebuild: the patch set is vendored in **`pinmame-patches/`** (3 `git am`-able patches + a README with the pinned upstream base commit and apply/build steps). Clone upstream at that base, `git am` the patches, build (`pinmame_shared.vcxproj` under `build/libpinmame/` → `Release/pinmame64.dll`; the VP-side recorder is `build/vpinmame/vpinmame.vcxproj` → `VPinMAME64.dll`), then copy the DLL into `bin/` AND re-run `pinball-setup/setup-pinball.py` to deploy — forgetting the deploy makes the wrapper silently fall back to the unpatched DLL.
+- Our patched PinMAME source: the **`switch-recorder` branch off `github.com/vpinball/pinmame`** (`src/libpinmame/libpinmame.{h,cpp}`) — adds the `PinmameDebug*` API and the m6809 dispatch-loop / RM/WM hooks, the `vp_putSwitch` switch recorder (`VPINMAME_SWITCHLOG`), and the closed-loop pacing exports `PinmameGetEmulationTime`/`PinmameTimeFenceReached` (backed by `time_fence_published_time` in `cpuexec.c` and helpers in `wpc/vpintf.c`). **The prebuilt DLLs ship in `bin/` and are all you need for replay + debug of any WPC game — the source is only required to rebuild/extend them.** To rebuild: the patch set is vendored in **`pinmame-patches/`** (3 `git am`-able patches + a README with the pinned upstream base commit and apply/build steps). Clone upstream at that base, `git am` the patches, build (`pinmame_shared.vcxproj` under `build/libpinmame/` → `Release/pinmame64.dll`, stored in `bin/` under the canonical name `libpinmame.dll`; the VP-side recorder is `build/vpinmame/vpinmame.vcxproj` → `VPinMAME64.dll`), then copy the DLL into `bin/` AND re-run `pinball-setup/setup-pinball.py` to deploy — forgetting the deploy makes the wrapper silently fall back to the unpatched DLL.
 - PinMAME releases: https://github.com/vpinball/pinmame/releases
 - Visual Pinball X releases: https://github.com/vpinball/vpinball/releases
 - VPinMAME COM interface notes: https://github.com/tanseydavid/WPCResources/blob/master/PinMAME/pinmame-debugger-help.md

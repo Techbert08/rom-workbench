@@ -11,7 +11,7 @@ A Claude Code plugin for reverse-engineering and modding Williams Pinball Contro
 | `build-wpc-rom` | Apply JSON patch specs to a WPC ROM zip, recompute the WPC checksum, produce a drop-in patched zip |
 | `record-pinball` | Capture gameplay sessions in Visual Pinball + VPinMAME; replay headlessly with state/DMD/audio/debugger traces; event-driven CPU debugger with breakpoints and watchpoints |
 | `synthetic-recording` | Author a replayable WPC session by hand — emit the switch-edge stream to drive the ROM into a chosen state without Visual Pinball |
-| `pinball-setup` | One-time toolchain installer: Visual Pinball X, PinMAME, VPinMAME, patched libpinmame with the debug API |
+| `pinball-setup` | One-time toolchain installer: Visual Pinball X, VPinMAME (Windows), patched libpinmame with the debug API |
 
 ## Install
 
@@ -27,7 +27,7 @@ Skills are then available as `/rom-workbench:wpc-investigate`, `/rom-workbench:r
 - Claude Code (latest version)
 - [uv](https://docs.astral.sh/uv/) (runs the replay/analysis scripts; `pinball-setup` installs it if missing). No system Python required — uv provisions the interpreter and per-script dependencies.
 - Windows only: an Administrator PowerShell once during setup for the `regsvr32 VPinMAME.dll` step (everything else — setup, recording, building — is cross-platform Python run via uv)
-- Windows: Visual Pinball X + PinMAME for session recording (run `pinball-setup` first)
+- Windows: Visual Pinball X + VPinMAME for session recording (run `pinball-setup` first)
 - macOS: `libpinmame.dylib` ships in `bin/` for headless replay (no VP needed)
 
 ## Game-specific configuration

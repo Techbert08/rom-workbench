@@ -1,7 +1,7 @@
 # Patched PinMAME source (for rebuilding the bundled libraries)
 
 The prebuilt libraries in `../bin/` (`libpinmame.dylib` for macOS,
-`pinmame64.dll`/`libpinmame.dll` for Windows) are built from upstream PinMAME
+`libpinmame.dll` for Windows) are built from upstream PinMAME
 **plus** the three patches in this directory. **You do not need these to *use*
 the tools** — the bundled libraries are game-generic and sufficient for replay +
 debug of any WPC title. They're here only so the source of the patch is
@@ -63,8 +63,10 @@ $PinmameSrc = 'C:\path\to\your\pinmame'
     "$PinmameSrc\build\libpinmame\pinmame_shared.vcxproj" `
     /p:Configuration=Release /p:Platform=x64 /m /nologo
 
+# The build artifact is named pinmame64.dll; store it under bin/ as the
+# canonical loader name libpinmame.dll (the name replay_host.py loads).
 Copy-Item "$PinmameSrc\build\libpinmame\Release\pinmame64.dll" `
-          <repo>\.claude\skills\record-pinball\bin\pinmame64.dll -Force
+          <repo>\plugins\rom-workbench\bin\libpinmame.dll -Force
 ```
 
 ## Status / cleanup

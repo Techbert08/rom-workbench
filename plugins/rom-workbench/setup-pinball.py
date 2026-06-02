@@ -5,8 +5,7 @@
 # ///
 """Cross-platform one-time installer for the rom-workbench (record-pinball) toolchain.
 
-Unifies the old setup-pinball.sh (macOS) and setup-pinball.ps1 (Windows) into one
-stdlib-only script. Everything installs under a per-user data directory:
+A stdlib-only script that installs everything under a per-user data directory:
 
     macOS    ~/Library/Application Support/rom-workbench/
     Windows  %LOCALAPPDATA%\\rom-workbench\\
@@ -22,10 +21,10 @@ Run it with either Python or uv:
 Steps:
   1. Ensure uv is installed (the day-to-day Python tools run via `uv run`).
   2. Download + install Visual Pinball X.
-  3. macOS:   install the patched libpinmame.dylib (prebuilt from bin/, else build
-              from source), deploy it into the VPX bundle, re-sign, Gatekeeper-check.
-     Windows: install PinMAME standalone + libpinmame and deploy the patched
-              pinmame64.dll; install VPinMAME COM + the patched VPinMAME64.dll and
+  3. Deploy the prebuilt patched libpinmame from bin/ into PINMAME_DIR (replay
+     loads it via ctypes; it's self-contained, so nothing to download).
+     macOS:   also deploy the dylib into the VPX bundle, re-sign, Gatekeeper-check.
+     Windows: also install VPinMAME COM, deploy the patched VPinMAME64.dll, and
               register it with regsvr32.
   4. Persist VPINBALL_DIR / PINMAME_DIR / (Windows) VPINMAME_DIR as user env vars.
 
@@ -66,10 +65,9 @@ VPX_WIN_ASSET = f"Developer.VPinballX-{VPX_TAG}-Release-win-x64.zip"
 VPX_MAC_ASSET_TMPL = "VPinballX_GL-10.8.0-2052-5a81d4e-Release-macos-{arch}.zip"
 VPX_BASE_URL = f"https://github.com/vpinball/vpinball/releases/download/v{VPX_TAG}"
 
-# PinMAME / VPinMAME (Windows binaries).
+# VPinMAME COM server (Windows). Supplies bass64.dll and the directory layout;
+# the patched VPinMAME64.dll from bin/ overlays the stock one after extraction.
 PINMAME_VERSION = "3.6.0-1227-ecd032e"
-PINMAME_WIN_ASSET = f"PinMAME-{PINMAME_VERSION}-win-x64.zip"
-LIBPINMAME_WIN_ASSET = f"libpinmame-{PINMAME_VERSION}-win-x64.zip"
 VPINMAME_WIN_ASSET = f"VPinMAME-{PINMAME_VERSION}-win-x64.zip"
 PINMAME_BASE_URL = f"https://github.com/vpinball/pinmame/releases/download/v{PINMAME_VERSION}"
 
@@ -631,73 +629,29 @@ def gatekeeper_check(vpx_dir: "Path | None") -> None:
 
 
 # =============================================================================
-# Windows: PinMAME standalone + libpinmame, VPinMAME COM
+# Windows: patched libpinmame (from bin/), VPinMAME COM
 # =============================================================================
 
-def _find_libpinmame_dll(directory: Path) -> "Path | None":
-    return next((p for p in directory.rglob("libpinmame*.dll") if p.is_file()), None)
-
-
-def _merge_tree(src: Path, dst: Path, copy: bool = False) -> None:
-    for item in src.rglob("*"):
-        if item.is_dir():
-            continue
-        rel = item.relative_to(src)
-        target = dst / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        (shutil.copy2 if copy else shutil.move)(str(item), str(target))
-
-
 def install_pinmame_windows(root: Path, force: bool) -> Path:
+    """Stage the prebuilt patched libpinmame into PINMAME_DIR.
+
+    replay.py loads libpinmame.dll from here via ctypes. The library is
+    self-contained (only the MSVC++ runtime + system DLLs — no bass64, no data
+    files), so there's nothing to download; we deploy bin/libpinmame.dll
+    directly, mirroring the macOS path."""
     pinmame_dir = root / "pinmame"
-    step(f"PinMAME standalone + libpinmame at {pinmame_dir}")
-    exe = pinmame_dir / "PinMAME.exe"
-    have = exe.exists() and _find_libpinmame_dll(pinmame_dir) is not None
-    if have and not force:
-        ok("PinMAME.exe and libpinmame.dll present; skipping.")
+    step(f"Patched libpinmame at {pinmame_dir}")
+    patched = BIN_DIR / "libpinmame.dll"
+    if not patched.exists():
+        die("bin/libpinmame.dll not found; replay needs it "
+            "(rebuild per pinmame-patches/README.md).")
+    pinmame_dir.mkdir(parents=True, exist_ok=True)
+    target = pinmame_dir / "libpinmame.dll"
+    if target.exists() and not force:
+        ok(f"libpinmame.dll present at {target}; skipping.")
     else:
-        pinmame_dir.mkdir(parents=True, exist_ok=True)
-        z1 = download(root, f"{PINMAME_BASE_URL}/{PINMAME_WIN_ASSET}", PINMAME_WIN_ASSET, force=force)
-        if not z1:
-            die("PinMAME standalone download failed.")
-        with tempfile.TemporaryDirectory() as td:
-            tmp = Path(td) / "x"
-            extract_zip(z1, tmp, strip=True)
-            _merge_tree(tmp, pinmame_dir, copy=False)
-        z2 = download(root, f"{PINMAME_BASE_URL}/{LIBPINMAME_WIN_ASSET}", LIBPINMAME_WIN_ASSET, force=force)
-        if not z2:
-            die("libpinmame download failed.")
-        with tempfile.TemporaryDirectory() as td:
-            tmp = Path(td) / "x"
-            extract_zip(z2, tmp, strip=True)
-            _merge_tree(tmp, pinmame_dir, copy=True)
-
-        if not exe.exists() and not next(iter(pinmame_dir.rglob("pinmame*.exe")), None):
-            die(f"PinMAME extraction did not produce pinmame.exe under {pinmame_dir}.")
-        dll = _find_libpinmame_dll(pinmame_dir)
-        if not dll:
-            die(f"libpinmame*.dll missing under {pinmame_dir} after extraction.")
-        canonical = pinmame_dir / "libpinmame.dll"
-        if dll.name.lower() != "libpinmame.dll":
-            shutil.copy2(dll, canonical)
-            ok(f"libpinmame at {dll.name}; copied to libpinmame.dll for fixed-name loaders.")
-        ok("PinMAME standalone + libpinmame installed.")
-
-    # Deploy the patched pinmame64.dll (libpinmame) over the installed one.
-    patched = BIN_DIR / "pinmame64.dll"
-    if patched.exists():
-        step(f"Deploying patched pinmame64.dll (libpinmame) to {pinmame_dir}")
-        dll = _find_libpinmame_dll(pinmame_dir)
-        if dll:
-            backup = dll.with_suffix(dll.suffix + ".orig")
-            if not backup.exists():
-                shutil.copy2(dll, backup)
-                ok(f"Backed up original {dll.name}")
-            shutil.copy2(patched, dll)
-            shutil.copy2(patched, pinmame_dir / "libpinmame.dll")
-            ok("Patched libpinmame deployed.")
-        else:
-            warn(f"libpinmame*.dll not found in {pinmame_dir}; skipping patch deploy.")
+        shutil.copy2(patched, target)
+        ok(f"Deployed bin/libpinmame.dll -> {target}")
     return pinmame_dir
 
 

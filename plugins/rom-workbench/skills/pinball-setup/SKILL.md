@@ -26,11 +26,15 @@ on macOS, `~/.local/share/rom-workbench/` on Linux.
 | Component | Where | Env var |
 |---|---|---|
 | Visual Pinball X 10.8.0 | `<root>\vpinball` | `VPINBALL_DIR` |
-| PinMAME standalone + libpinmame | `<root>\pinmame` | `PINMAME_DIR` |
+| Patched libpinmame.dll (prebuilt from `bin/`) | `<root>\pinmame` | `PINMAME_DIR` |
 | VPinMAME COM (regsvr32-registered) | `<root>\vpinmame` | `VPINMAME_DIR` |
 | uv (installed if missing) | `%USERPROFILE%\.local\bin` | — |
 | Patched VPinMAME64.dll | deployed over the installed VPinMAME | — |
-| Patched libpinmame (debugger API) | deployed over the installed PinMAME | — |
+
+No PinMAME standalone is downloaded: replay loads only the self-contained
+`libpinmame.dll`, which ships prebuilt in `bin/`. VPinMAME is still installed —
+it supplies `bass64.dll` (a hard dependency of the patched `VPinMAME64.dll`) and
+the directory layout VP's COM path expects.
 
 ### macOS
 
@@ -75,9 +79,9 @@ Override with `--install-root`. Idempotent; pass `--force` to re-download/rebuil
 Steps:
 1. **Ensure uv** (install via https://astral.sh/uv if missing). The Python tools run via `uv run`, so uv — not a system Python — is the only ongoing Python prerequisite.
 2. **Visual Pinball X** — download + install into `<root>/vpinball/` (skips gracefully if the pinned release has no asset for this OS/arch; replay doesn't need VPX).
-3. **Patched libpinmame**:
-   - **macOS** — install `libpinmame.dylib` into `<root>/pinmame/` (prefer the arch-matched prebuilt in `bin/`; otherwise build from `--pinmame-src`, default `../pinmame` beside the repo). Deploy it into the VPX bundle, ad-hoc re-sign, and run a Gatekeeper trial-launch.
-   - **Windows** — download PinMAME standalone + libpinmame into `<root>/pinmame/` and deploy the patched `pinmame64.dll`; download VPinMAME COM into `<root>/vpinmame/`, deploy the patched `VPinMAME64.dll`, and `regsvr32`-register it (needs an elevated shell once — the script detects this and prints the exact relaunch command rather than failing).
+3. **Patched libpinmame** — deploy the prebuilt patched library from `bin/` into `<root>/pinmame/` (replay loads it via ctypes; it's self-contained, so nothing is downloaded).
+   - **macOS** — install `libpinmame.dylib` (prefer the arch-matched prebuilt in `bin/`; otherwise build from `--pinmame-src`, default `../pinmame` beside the repo). Also deploy it into the VPX bundle, ad-hoc re-sign, and run a Gatekeeper trial-launch.
+   - **Windows** — copy `bin/libpinmame.dll` into `<root>/pinmame/`. Then download VPinMAME COM into `<root>/vpinmame/` (for `bass64.dll` + the layout), deploy the patched `VPinMAME64.dll`, and `regsvr32`-register it (needs an elevated shell once — the script detects this and prints the exact relaunch command rather than failing).
 4. **Persist env vars** at user scope: `VPINBALL_DIR`, `PINMAME_DIR`, and (Windows) `VPINMAME_DIR`. On macOS/Linux these are written to `~/.zshenv` and `~/.bash_profile`; on Windows to the user environment (HKCU).
 
 Downloads are SHA-256 verified against a sidecar recorded on first use (trust-on-first-use). To pin upstream hashes, fill in the empty `expected_sha` constants near the top of the script.
@@ -149,10 +153,10 @@ $PinmameSrc = 'C:\path\to\your\pinmame'   # your local clone of the patched bran
     "$PinmameSrc\build\libpinmame\pinmame_shared.vcxproj" `
     /p:Configuration=Release /p:Platform=x64 /m /nologo
 
-# Copy into the plugin bin/ and re-run setup-pinball.py — its deploy step
-# (re)installs the DLL into PINMAME_DIR.
+# Copy into the plugin bin/ under the canonical loader name and re-run
+# setup-pinball.py — its deploy step (re)installs the DLL into PINMAME_DIR.
 Copy-Item "$PinmameSrc\build\libpinmame\Release\pinmame64.dll" `
-          ${CLAUDE_PLUGIN_ROOT}\bin\pinmame64.dll -Force
+          ${CLAUDE_PLUGIN_ROOT}\bin\libpinmame.dll -Force
 uv run '${CLAUDE_PLUGIN_ROOT}/setup-pinball.py'
 ```
 
@@ -178,5 +182,5 @@ Python 3.9+ (`python3 setup-pinball.py` will then install uv for you). After tha
 ```
 ${CLAUDE_PLUGIN_ROOT}/
 ├── SKILL.md                # this file
-└── setup-pinball.py        # cross-platform VP + PinMAME (+ VPinMAME on Windows) installer
+└── setup-pinball.py        # cross-platform VP + libpinmame (+ VPinMAME on Windows) installer
 ```

@@ -54,7 +54,7 @@ static analysis can't. Use them together.
 
 Setup is a one-time install handled by the `pinball-setup` skill. It deploys:
 
-- Visual Pinball X, PinMAME standalone, our patched libpinmame (with the Debug API). Sets `PINMAME_DIR`.
+- Visual Pinball X and our patched libpinmame (with the Debug API). Sets `PINMAME_DIR`.
 - VPinMAME COM (`regsvr32`, needs Admin once).
 
 If anything is missing, `replay.py` prints a clear "run pinball-setup first" message.
