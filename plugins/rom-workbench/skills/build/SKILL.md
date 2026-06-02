@@ -5,6 +5,10 @@ description: Apply JSON patch specs to a WPC ROM zip and produce a patched, chec
 
 # build
 
+> **Orientation:** if you haven't already, load `rom-workbench:overview` for the
+> end-to-end mod workflow (setup → record → synthesize → debug → build → test)
+> and where this step fits.
+
 Applies ordered JSON patch specs to a WPC game ROM, recalculates the WPC 16-bit checksum, and repackages the ROM zip. The output drops into VP's `roms/` directory for immediate testing via `record`'s single-sided `replay.py`.
 
 ## When to invoke

@@ -5,6 +5,10 @@ description: One-time installer for the WPC mod toolchain — Visual Pinball X +
 
 # setup
 
+> **Orientation:** if you haven't already, load `rom-workbench:overview` for the
+> end-to-end mod workflow (setup → record → synthesize → debug → build → test)
+> and where this step fits.
+
 One-time install. Once setup runs successfully, day-to-day work doesn't need this skill loaded — `debug` and `record` use the installed components directly.
 
 ## When to invoke

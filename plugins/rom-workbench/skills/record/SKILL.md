@@ -5,6 +5,10 @@ description: Capture a Williams pinball gameplay session in Visual Pinball + VPi
 
 # record
 
+> **Orientation:** if you haven't already, load `rom-workbench:overview` for the
+> end-to-end mod workflow (setup → record → synthesize → debug → build → test)
+> and where this step fits.
+
 Records and replays Williams pinball gameplay sessions. The replay path is
 **event-driven** — libpinmame and our patched debugger emit callbacks, and
 `replay.py` writes them out. The `Dbg` trace is the in-process CPU

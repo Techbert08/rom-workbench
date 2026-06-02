@@ -5,6 +5,10 @@ description: Author a replayable Williams (WPC) pinball session by hand — no V
 
 # synthetic-record
 
+> **Orientation:** if you haven't already, load `rom-workbench:overview` for the
+> end-to-end mod workflow (setup → record → synthesize → debug → build → test)
+> and where this step fits.
+
 A recorded session is nothing but a `session.jsonl` of switch edges
 (`{"t":<emu-sec>,"n":<sw#>,"on":0|1,"kind":"switch"}`) that `record`'s
 `replay.py` injects into libpinmame with `PinmameSetSwitch`. Visual Pinball is

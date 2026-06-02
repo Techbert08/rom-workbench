@@ -5,6 +5,10 @@ description: Reverse-engineer Williams Pinball Controller (WPC) ROMs — static 
 
 # debug
 
+> **Orientation:** if you haven't already, load `rom-workbench:overview` for the
+> end-to-end mod workflow (setup → record → synthesize → debug → build → test)
+> and where this step fits.
+
 Reverse-engineering a WPC ROM is one loop: **simulate → break/step → read the
 disassembly at the live PC**. Both halves ship here:
 
