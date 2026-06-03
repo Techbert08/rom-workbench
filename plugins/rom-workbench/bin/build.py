@@ -42,50 +42,11 @@ import os
 import sys
 import zipfile
 from pathlib import Path
-from typing import List, NoReturn, Optional
+from typing import List, Optional
+
+from workbench_env import _C, _c, die, load_config, ok, step, warn
 
 IS_WIN = os.name == "nt"
-
-# =============================================================================
-# Console output
-# =============================================================================
-
-class _C:
-    CYAN = "\033[0;36m"; GREEN = "\033[0;32m"; YELLOW = "\033[1;33m"
-    RED = "\033[0;31m"; GRAY = "\033[0;90m"; RESET = "\033[0m"
-
-
-def _enable_ansi() -> bool:
-    if not sys.stdout.isatty():
-        return False
-    if IS_WIN:
-        try:
-            import ctypes
-            k = ctypes.windll.kernel32  # type: ignore[attr-defined]  # Windows-only
-            h = k.GetStdHandle(-11)
-            mode = ctypes.c_uint32()
-            if k.GetConsoleMode(h, ctypes.byref(mode)):
-                k.SetConsoleMode(h, mode.value | 0x0004)  # VT processing
-        except Exception:
-            return False
-    return True
-
-
-_COLOR = _enable_ansi()
-
-
-def _c(code: str, msg: str) -> str:
-    return f"{code}{msg}{_C.RESET}" if _COLOR else msg
-
-
-def step(msg: str) -> None: print("\n" + _c(_C.CYAN, f"==> {msg}"))
-def ok(msg: str) -> None:   print("    " + _c(_C.GREEN, msg))
-def warn(msg: str) -> None: print("    " + _c(_C.YELLOW, msg))
-
-
-def die(msg: str) -> NoReturn:
-    print("    " + _c(_C.RED, "error: ") + msg, file=sys.stderr)
-    sys.exit(1)
 
 
 # =============================================================================
@@ -233,6 +194,7 @@ def pick_game_rom(names: List[str], sizes: dict) -> Optional[str]:
 # =============================================================================
 
 def main() -> int:
+    load_config()  # --deploy needs VPINMAME_DIR / PINMAME_DIR from config.env
     ap = argparse.ArgumentParser(
         description="Apply JSON patch specs to a WPC ROM zip and produce a patched zip.")
     ap.add_argument("--rom", default=None,

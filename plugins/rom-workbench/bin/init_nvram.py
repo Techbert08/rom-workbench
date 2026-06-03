@@ -30,6 +30,8 @@ import tempfile
 import uuid
 from pathlib import Path
 
+from workbench_env import load_config
+
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(
@@ -62,6 +64,7 @@ def env_var(name: str) -> str:
 
 
 def main() -> int:
+    load_config()  # recover PINMAME_DIR from config.env if not already in the env
     args = parse_args()
 
     if not args.rom_zip.is_file():

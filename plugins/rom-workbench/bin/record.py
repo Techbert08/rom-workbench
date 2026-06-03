@@ -42,52 +42,11 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import NoReturn
+
+from workbench_env import _C, _c, die, info, load_config, ok, step, warn
 
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
-
-# =============================================================================
-# Console output
-# =============================================================================
-
-class _C:
-    CYAN = "\033[0;36m"; GREEN = "\033[0;32m"; YELLOW = "\033[1;33m"
-    RED = "\033[0;31m"; GRAY = "\033[0;90m"; RESET = "\033[0m"
-
-
-def _enable_ansi() -> bool:
-    if not sys.stdout.isatty():
-        return False
-    if IS_WIN:
-        try:
-            import ctypes
-            k = ctypes.windll.kernel32  # type: ignore[attr-defined]  # Windows-only
-            h = k.GetStdHandle(-11)
-            mode = ctypes.c_uint32()
-            if k.GetConsoleMode(h, ctypes.byref(mode)):
-                k.SetConsoleMode(h, mode.value | 0x0004)  # VT processing
-        except Exception:
-            return False
-    return True
-
-
-_COLOR = _enable_ansi()
-
-
-def _c(code: str, msg: str) -> str:
-    return f"{code}{msg}{_C.RESET}" if _COLOR else msg
-
-
-def step(msg: str) -> None: print("\n" + _c(_C.CYAN, f"==> {msg}"))
-def ok(msg: str) -> None:   print("    " + _c(_C.GREEN, "ok: ") + msg)
-def warn(msg: str) -> None: print("    " + _c(_C.YELLOW, "warn: ") + msg)
-def info(msg: str) -> None: print("    " + _c(_C.GRAY, msg))
-
-
-def die(msg: str) -> NoReturn:
-    print("    " + _c(_C.RED, "error: ") + msg, file=sys.stderr)
-    sys.exit(1)
 
 
 # =============================================================================
@@ -97,7 +56,8 @@ def die(msg: str) -> NoReturn:
 def env_or_die(name: str) -> str:
     v = os.environ.get(name)
     if not v:
-        die(f"{name} not set. Run the setup skill (setup-pinball.py) and open a new shell.")
+        die(f"{name} not set, and no config.env found. Run the setup skill "
+            "(setup-pinball.py) to install the toolchain and write the config.")
     if not Path(v).exists():
         die(f"{name}={v} does not exist.")
     return v
@@ -185,6 +145,7 @@ def launch_and_wait(vpx_app: Path, vpx_exe: Path, table: Path,
 # =============================================================================
 
 def main() -> int:
+    load_config()  # recover VPINBALL_DIR / PINMAME_DIR / VPINMAME_DIR from config.env
     ap = argparse.ArgumentParser(
         description="Record a WPC gameplay session in Visual Pinball + VPinMAME.")
     ap.add_argument("--rom", default="congo_21",

@@ -23,7 +23,9 @@ Steps:
      macOS:   also deploy the dylib into the VPX bundle, re-sign, Gatekeeper-check.
      Windows: also install VPinMAME COM, deploy the patched VPinMAME64.dll, and
               register it with regsvr32.
-  4. Persist VPINBALL_DIR / PINMAME_DIR / (Windows) VPINMAME_DIR as user env vars.
+  4. Persist VPINBALL_DIR / PINMAME_DIR / (Windows) VPINMAME_DIR as user env vars
+     *and* into a config.env the other entrypoints load (so a fresh shell that
+     never re-read the user env still finds the toolchain). See workbench_env.py.
 
 Re-running is idempotent; pass --force to re-download / rebuild.
 """
@@ -41,7 +43,12 @@ import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any
+
+from workbench_env import (
+    _C, _c, default_data_root, die, info, is_admin, ok, run_elevated, step,
+    warn, write_config,
+)
 
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
@@ -72,47 +79,8 @@ PINMAME_BASE_URL = f"https://github.com/vpinball/pinmame/releases/download/v{PIN
 # Base commit the switch-recorder patches apply onto (macOS source-build fallback).
 PINMAME_BASE_COMMIT = "3ef424b0a560b08b563a345d1ecd0fa733533eef"
 
-# =============================================================================
-# Console output
-# =============================================================================
-
-class _C:
-    CYAN = "\033[0;36m"; GREEN = "\033[0;32m"; YELLOW = "\033[1;33m"
-    RED = "\033[0;31m"; GRAY = "\033[0;90m"; RESET = "\033[0m"
-
-
-def _enable_ansi() -> bool:
-    if not sys.stdout.isatty():
-        return False
-    if IS_WIN:
-        try:
-            import ctypes
-            k = ctypes.windll.kernel32  # type: ignore[attr-defined]  # Windows-only
-            h = k.GetStdHandle(-11)
-            mode = ctypes.c_uint32()
-            if k.GetConsoleMode(h, ctypes.byref(mode)):
-                k.SetConsoleMode(h, mode.value | 0x0004)  # VT processing
-        except Exception:
-            return False
-    return True
-
-
-_COLOR = _enable_ansi()
-
-
-def _c(code: str, msg: str) -> str:
-    return f"{code}{msg}{_C.RESET}" if _COLOR else msg
-
-
-def step(msg: str) -> None: print("\n" + _c(_C.CYAN, f"==> {msg}"))
-def ok(msg: str) -> None:   print("    " + _c(_C.GREEN, "ok: ") + msg)
-def warn(msg: str) -> None: print("    " + _c(_C.YELLOW, "warn: ") + msg)
-def info(msg: str) -> None: print("    " + _c(_C.GRAY, msg))
-
-
-def die(msg: str) -> NoReturn:
-    print("    " + _c(_C.RED, "error: ") + msg, file=sys.stderr)
-    sys.exit(1)
+# Console output (step/ok/warn/info/die and the ANSI plumbing) lives in
+# workbench_env so every entrypoint shares one implementation.
 
 
 def run(cmd, **kw):
@@ -128,13 +96,7 @@ def run(cmd, **kw):
 def data_root(override: "str | None") -> Path:
     if override:
         return Path(override).expanduser().resolve()
-    if IS_WIN:
-        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-        return Path(base) / "rom-workbench"
-    if IS_MAC:
-        return Path.home() / "Library" / "Application Support" / "rom-workbench"
-    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    return Path(base) / "rom-workbench"
+    return default_data_root()
 
 
 def cache_dir(root: Path) -> Path:
@@ -674,14 +636,6 @@ def install_vpinmame_windows(root: Path, force: bool) -> Path:
     return vpm_dir
 
 
-def _is_admin() -> bool:
-    try:
-        import ctypes
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())  # type: ignore[attr-defined]  # Windows-only
-    except Exception:
-        return False
-
-
 def _vpm_registered() -> bool:
     try:
         import winreg  # Windows-only stdlib module
@@ -697,15 +651,26 @@ def _regsvr32(dll: Path, force: bool) -> None:
         ok("VPinMAME.Controller already COM-registered.")
         return
     step("Registering VPinMAME.Controller via regsvr32")
-    if not _is_admin():
-        warn("regsvr32 needs Administrator. Skipping registration.")
-        warn("Run this once from an elevated PowerShell, then re-run setup:")
-        print(_c(_C.YELLOW, f"      Start-Process regsvr32 -Verb RunAs -ArgumentList '\"{dll}\"'"))
-        return
     rs = str(Path(os.environ["WINDIR"]) / "system32" / "regsvr32.exe")
-    proc = subprocess.run([rs, "/s", str(dll)])
-    if proc.returncode != 0:
-        die(f"regsvr32 failed (exit {proc.returncode}) on {dll}.")
+
+    if is_admin():
+        rc = subprocess.run([rs, "/s", str(dll)]).returncode
+    else:
+        # Writing the COM registration needs Administrator. Relaunch just
+        # regsvr32 elevated; Windows shows the UAC consent dialog and we wait
+        # for it to finish rather than punting the work back to the user.
+        info("Requesting Administrator access (a UAC dialog will appear) to "
+             "register the VPinMAME COM server ...")
+        rc = run_elevated(rs, f'/s "{dll}"')
+        if rc is None:
+            warn("Elevation was declined or could not start; COM server not registered.")
+            warn("Approve the UAC prompt on a re-run, or do it once manually from an "
+                 "elevated PowerShell:")
+            print(_c(_C.YELLOW, f"      Start-Process regsvr32 -Verb RunAs -ArgumentList '/s','\"{dll}\"'"))
+            return
+
+    if rc != 0:
+        die(f"regsvr32 failed (exit {rc}) on {dll}.")
     if not _vpm_registered():
         die("regsvr32 reported success but HKCR\\VPinMAME.Controller is missing.")
     ok("VPinMAME.Controller registered.")
@@ -737,22 +702,32 @@ def main() -> int:
 
     ensure_python_deps()
 
+    # Record every persisted var so we can also drop it into the config file that
+    # the other entrypoints load — see persist_config() below.
+    config: dict[str, str] = {}
+
+    def persist(name: str, value: str) -> None:
+        set_user_env(name, value)
+        config[name] = str(value)
+
     vpx_dir = install_vpx(root, args.force)
     if vpx_dir:
-        set_user_env("VPINBALL_DIR", str(vpx_dir))
+        persist("VPINBALL_DIR", str(vpx_dir))
 
     if IS_WIN:
         pinmame_dir = install_pinmame_windows(root, args.force)
-        set_user_env("PINMAME_DIR", str(pinmame_dir))
+        persist("PINMAME_DIR", str(pinmame_dir))
         vpm_dir = install_vpinmame_windows(root, args.force)
-        set_user_env("VPINMAME_DIR", str(vpm_dir))
+        persist("VPINMAME_DIR", str(vpm_dir))
     else:
         pinmame_dir = install_libpinmame_macos(root, pinmame_src, args.force) if IS_MAC \
             else (root / "pinmame")
         if IS_MAC:
-            set_user_env("PINMAME_DIR", str(pinmame_dir))
+            persist("PINMAME_DIR", str(pinmame_dir))
             deploy_dylib_to_bundle(vpx_dir, pinmame_dir / "libpinmame.dylib")
             gatekeeper_check(vpx_dir)
+
+    cfg_path = write_config(config) if config else None
 
     # --- Summary -------------------------------------------------------------
     print("\n" + _c(_C.GREEN, "Toolchain setup complete."))
@@ -765,12 +740,19 @@ def main() -> int:
         print(f"  PINMAME_DIR   = {root / 'pinmame'}")
         print(f"  VPINMAME_DIR  = {root / 'vpinmame'}")
     print(f"  python        = {sys.executable}")
+    if cfg_path:
+        print(f"  config        = {cfg_path}")
     print()
+    if cfg_path:
+        print("These paths were also written to the config file above, which the")
+        print("rom-workbench entrypoints load on startup — so you can record/build")
+        print("right away without opening a new terminal.")
     if IS_WIN:
-        print("Env vars set at user scope. Open a new terminal to pick them up.")
+        print("(They are persisted as user-scope env vars too; a new terminal picks")
+        print(" those up, but the config file means you don't have to wait for one.)")
     else:
-        print("Env vars written to ~/.zshenv and ~/.bash_profile.")
-        print("Restart your shell or run:  source ~/.zshenv")
+        print("(They are also written to ~/.zshenv and ~/.bash_profile for")
+        print(" interactive shells: restart your shell or run `source ~/.zshenv`.)")
     print("Next: from a game working dir (ROM at ./orig/<rom>.zip, table at")
     print("./tables/<rom>.vpx), record a session, e.g.")
     print("  python record.py --rom congo_21")

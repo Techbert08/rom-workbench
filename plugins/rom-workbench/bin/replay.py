@@ -37,6 +37,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from workbench_env import load_config
+
 
 VALID_TRACES = ("state", "dmd", "sound", "dbg")
 
@@ -103,6 +105,7 @@ def env_var(name: str) -> str:
 
 
 def main() -> int:
+    load_config()  # recover PINMAME_DIR from config.env if not already in the env
     args = parse_args()
 
     if not args.session.is_dir():
