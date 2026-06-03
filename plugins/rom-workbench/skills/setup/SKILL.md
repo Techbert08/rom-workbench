@@ -25,6 +25,14 @@ Everything lands under one per-user data root (see "Setup scripts" below):
 `%LOCALAPPDATA%\rom-workbench\` on Windows, `~/Library/Application Support/rom-workbench/`
 on macOS, `~/.local/share/rom-workbench/` on Linux.
 
+> **Running inside Claude (Code/Desktop)?** The tool sandbox only makes the
+> **working directory and its subdirs** real and writable — writes to
+> `%LOCALAPPDATA%` etc. land in an invisible overlay that doesn't exist on the
+> real machine. So when `setup-pinball.py` detects the sandbox (via `CLAUDECODE`
+> / `CLAUDE_CODE_ENTRYPOINT`) it installs under **`<cwd>/.rom-workbench/`**
+> instead, and points the env vars there, so the install is real. Override with
+> `--install-root`.
+
 ### Windows
 
 | Component | Where | Env var |
@@ -74,6 +82,7 @@ underneath, plus a `cache/`:
 | macOS | `~/Library/Application Support/rom-workbench/` |
 | Windows | `%LOCALAPPDATA%\rom-workbench\` |
 | Linux | `$XDG_DATA_HOME` (or `~/.local/share`)`/rom-workbench/` |
+| Inside Claude sandbox | `<cwd>/.rom-workbench/` (the only real-writable zone) |
 
 Override with `--install-root`. Idempotent; pass `--force` to re-download/rebuild.
 

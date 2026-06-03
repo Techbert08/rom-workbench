@@ -125,9 +125,25 @@ def run(cmd, **kw):
 # Paths / env
 # =============================================================================
 
+def _in_claude_sandbox() -> bool:
+    """True when running inside Claude Code / Claude Desktop's tool sandbox."""
+    return bool(os.environ.get("CLAUDECODE") or os.environ.get("CLAUDE_CODE_ENTRYPOINT"))
+
+
 def data_root(override: "str | None") -> Path:
     if override:
         return Path(override).expanduser().resolve()
+    # Inside the Claude Code sandbox (notably Claude Desktop on Windows) only the
+    # working directory and its subdirectories are real and writable; writes to a
+    # per-user location like %LOCALAPPDATA% land in an invisible overlay that does
+    # not exist on the real machine. Install under the cwd so the toolchain — and
+    # the env vars/COM registration that point at it — are real. Override with
+    # --install-root to force a specific location.
+    if _in_claude_sandbox():
+        root = Path.cwd().resolve() / ".rom-workbench"
+        info(f"Claude sandbox detected — installing under the working directory: {root}")
+        info("(only the cwd is real/writable in the sandbox; pass --install-root to override)")
+        return root
     if IS_WIN:
         base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
         return Path(base) / "rom-workbench"
@@ -682,33 +698,50 @@ def _is_admin() -> bool:
         return False
 
 
-def _vpm_registered() -> bool:
+def _vpm_server_path() -> "str | None":
+    """Filesystem path the registered VPinMAME.Controller resolves to (its
+    CLSID's InprocServer32), or None if it isn't registered. We compare against
+    this — not mere presence — so an existing registration pointing at some
+    *other* VPinMAME (a prior VP install) is re-pointed at our patched DLL."""
     try:
         import winreg  # Windows-only stdlib module
         wr: Any = winreg
-        with wr.OpenKey(wr.HKEY_CLASSES_ROOT, "VPinMAME.Controller"):
-            return True
+        with wr.OpenKey(wr.HKEY_CLASSES_ROOT, r"VPinMAME.Controller\CLSID") as k:
+            clsid = wr.QueryValueEx(k, "")[0]
+        with wr.OpenKey(wr.HKEY_CLASSES_ROOT, rf"CLSID\{clsid}\InprocServer32") as k:
+            return wr.QueryValueEx(k, "")[0]
     except OSError:
-        return False
+        return None
+
+
+def _same_path(a: "str | None", b: str) -> bool:
+    return bool(a) and os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
 
 def _regsvr32(dll: Path, force: bool) -> None:
-    if _vpm_registered() and not force:
-        ok("VPinMAME.Controller already COM-registered.")
+    target = str(dll)
+    current = _vpm_server_path()
+    if _same_path(current, target) and not force:
+        ok(f"VPinMAME.Controller already registered to {target}.")
         return
+    if current:
+        info(f"VPinMAME.Controller points to {current} — re-registering to this build.")
     step("Registering VPinMAME.Controller via regsvr32")
     if not _is_admin():
         warn("regsvr32 needs Administrator. Skipping registration.")
-        warn("Run this once from an elevated PowerShell, then re-run setup:")
+        warn("Re-run setup-pinball.py from an elevated PowerShell to register it "
+             "(it will re-point VPinMAME.Controller at this build), or run once:")
         print(_c(_C.YELLOW, f"      Start-Process regsvr32 -Verb RunAs -ArgumentList '\"{dll}\"'"))
         return
     rs = str(Path(os.environ["WINDIR"]) / "system32" / "regsvr32.exe")
     proc = subprocess.run([rs, "/s", str(dll)])
     if proc.returncode != 0:
         die(f"regsvr32 failed (exit {proc.returncode}) on {dll}.")
-    if not _vpm_registered():
-        die("regsvr32 reported success but HKCR\\VPinMAME.Controller is missing.")
-    ok("VPinMAME.Controller registered.")
+    new = _vpm_server_path()
+    if not _same_path(new, target):
+        die(f"regsvr32 returned success but VPinMAME.Controller resolves to "
+            f"{new!r}, not {target}. Registration did not take.")
+    ok(f"VPinMAME.Controller registered -> {target}")
 
 
 # =============================================================================
