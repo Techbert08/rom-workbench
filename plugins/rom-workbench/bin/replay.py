@@ -1,8 +1,4 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.9"
-# dependencies = []
-# ///
+#!/usr/bin/env python3
 """Headlessly replay a session against a single ROM, with selectable traces.
 
 Single-sided runner: one ROM, one input session, one NVRAM snapshot in;
@@ -26,7 +22,7 @@ Trace features (composable via comma-separated --trace):
               --dbg-step-after N). No polling, no missed hits.
 
 Usage:
-    uv run replay.py --rom congo_21 --rom-zip ./dist/congo_21_modded.zip \\
+    python3 replay.py --rom congo_21 --rom-zip ./dist/congo_21_modded.zip \\
         --session ./sessions/<utc> --nvram ./orig/congo_21.nv \\
         --trace state,dbg --break-pc 0xD9A6 --dbg-step-after 80
 """
@@ -199,7 +195,7 @@ def main() -> int:
 
     if args.interactive:
         print(f"==> replay_host: INTERACTIVE session, control port {args.dbg_port}")
-        print(f"    Drive it with:  uv run {Path(__file__).parent / 'dbg.py'} "
+        print(f"    Drive it with:  python3 {Path(__file__).parent / 'dbg.py'} "
               f"--port {args.dbg_port} <command>")
     else:
         print(f"==> replay_host: trace={','.join(traces)} max={args.max_sec}s")
@@ -213,7 +209,7 @@ def main() -> int:
     print()
     print("To compare against another run:")
     diff_script = Path(__file__).parent / "diff_traces.py"
-    print(f"  uv run {diff_script} \\")
+    print(f"  python3 {diff_script} \\")
     print(f"      --a <other-outdir> --b {out_dir} --out <diff-outdir>")
     return 0
 

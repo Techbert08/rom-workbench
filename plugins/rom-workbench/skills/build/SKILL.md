@@ -22,16 +22,16 @@ Applies ordered JSON patch specs to a WPC game ROM, recalculates the WPC 16-bit 
 
 ```bash
 # Build with checksum disabled (safest during development)
-uv run '${CLAUDE_PLUGIN_ROOT}/bin/build.py' --disable-checksum
+python3 '${CLAUDE_PLUGIN_ROOT}/bin/build.py' --disable-checksum
 
 # Build with real checksum, deploy into VP's roms/ dir
-uv run '${CLAUDE_PLUGIN_ROOT}/bin/build.py' --deploy
+python3 '${CLAUDE_PLUGIN_ROOT}/bin/build.py' --deploy
 
 # Validate against a recorded session (single-sided replay against the modded ROM).
 # First time the modded zip changes the WPC checksum word ($FFEE), produce a
 # freshly-reset NVRAM snapshot so the replay doesn't pay the factory-reset cost.
-uv run '${CLAUDE_PLUGIN_ROOT}/bin/init_nvram.py' --rom-zip ./dist/congo_21_modded.zip --force
-uv run '${CLAUDE_PLUGIN_ROOT}/bin/replay.py' \
+python3 '${CLAUDE_PLUGIN_ROOT}/bin/init_nvram.py' --rom-zip ./dist/congo_21_modded.zip --force
+python3 '${CLAUDE_PLUGIN_ROOT}/bin/replay.py' \
     --rom congo_21 --rom-zip ./dist/congo_21_modded.zip \
     --session ./sessions/<UTC> \
     --nvram ./dist/congo_21_modded.nv \
@@ -40,7 +40,7 @@ uv run '${CLAUDE_PLUGIN_ROOT}/bin/replay.py' \
 
 ## Prerequisites
 
-- **`uv`** on PATH (installed by `setup`). `build.py` is a stdlib-only PEP 723 script — `uv run` provisions the interpreter; no `pip install` needed.
+- **`python3`** on PATH (3.9+). `build.py` is stdlib-only — no extra packages needed.
 - **ROM zip** in `./orig/` (or pass `--rom-zip <path>` / `--rom <name>`). The build never modifies `orig/` — it reads the source zip and writes to `dist/`.
 - **Patch specs** in `./source/patches/` (or pass `--patch-dir <path>`). May be empty; the script will still fix the checksum / disable it.
 - **`--deploy` only**: `VPINMAME_DIR` (Windows) / `PINMAME_DIR` (macOS) env var set (run the `setup` skill once).
@@ -124,10 +124,10 @@ There is no byte-sum cap; any single 16-bit value is a valid delta, so any patch
 1. Identify bytes to patch (debug: rom.py dis/xref/funcs/dump/search;
    debug: the live debugger for confirming the path)
 2. Write source/patches/NNN-description.json
-3. uv run '${CLAUDE_PLUGIN_ROOT}/bin/build.py' --disable-checksum
-4. uv run '${CLAUDE_PLUGIN_ROOT}/bin/init_nvram.py' \
+3. python3 '${CLAUDE_PLUGIN_ROOT}/bin/build.py' --disable-checksum
+4. python3 '${CLAUDE_PLUGIN_ROOT}/bin/init_nvram.py' \
        --rom-zip ./dist/congo_21_modded.zip --force
-5. uv run '${CLAUDE_PLUGIN_ROOT}/bin/replay.py' \
+5. python3 '${CLAUDE_PLUGIN_ROOT}/bin/replay.py' \
        --rom congo_21 --rom-zip ./dist/congo_21_modded.zip \
        --session ./sessions/<UTC> --nvram ./dist/congo_21_modded.nv \
        --trace state,dmd

@@ -1,8 +1,4 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.9"
-# dependencies = []
-# ///
+#!/usr/bin/env python3
 """Cross-platform one-time installer for the rom-workbench (record) toolchain.
 
 A stdlib-only script that installs everything under a per-user data directory:
@@ -13,13 +9,14 @@ A stdlib-only script that installs everything under a per-user data directory:
 
 with vpinball/, pinmame/ and (Windows) vpinmame/ underneath, plus a cache/.
 
-Run it with either Python or uv:
+Requires Python 3.9+ and pip on PATH; run it directly:
 
-    python3 setup-pinball.py        # bootstraps uv if missing, then installs
-    uv run  setup-pinball.py        # once uv is already available
+    python3 setup-pinball.py        # (or `python setup-pinball.py` on Windows)
 
 Steps:
-  1. Ensure uv is installed (the day-to-day Python tools run via `uv run`).
+  1. Verify pip for this interpreter and install Pillow (the only third-party
+     dependency; used by the DMD-render tools). Every other tool is stdlib-only
+     and runs as `python <tool>.py`.
   2. Download + install Visual Pinball X.
   3. Deploy the prebuilt patched libpinmame from lib/ into PINMAME_DIR (replay
      loads it via ctypes; it's self-contained, so nothing to download).
@@ -295,41 +292,28 @@ def extract_zip(zip_path: Path, dest: Path, strip: bool = False) -> None:
 
 
 # =============================================================================
-# Step 1: uv
+# Step 1: Python + pip + Pillow
 # =============================================================================
 
-def _user_local_bin() -> Path:
-    return (Path(os.environ["USERPROFILE"]) / ".local" / "bin") if IS_WIN \
-        else (Path.home() / ".local" / "bin")
+def ensure_python_deps() -> None:
+    """Verify pip is available for this interpreter, then install the only
+    third-party dependency the toolkit needs: Pillow (used by the DMD-render
+    tools). Every other tool is stdlib-only and runs as `python <tool>.py`."""
+    step("Checking Python + pip")
+    info(f"Python {platform.python_version()} at {sys.executable}")
+    pip_check = subprocess.run([sys.executable, "-m", "pip", "--version"],
+                               capture_output=True, text=True)
+    if pip_check.returncode != 0:
+        die("pip is not available for this Python interpreter. Install pip "
+            "(e.g. `python -m ensurepip --upgrade`) so it is importable, then re-run.")
+    ok(pip_check.stdout.strip() or "pip available")
 
-
-def ensure_uv() -> None:
-    step("Checking uv")
-    if shutil.which("uv"):
-        ver = subprocess.run(["uv", "--version"], capture_output=True, text=True)
-        ok(f"{ver.stdout.strip() or 'uv'} at {shutil.which('uv')}")
-        return
-
-    warn("uv not found — installing from https://astral.sh/uv ...")
-    if IS_WIN:
-        run(["powershell", "-NoProfile", "-ExecutionPolicy", "ByPass", "-Command",
-             "irm https://astral.sh/uv/install.ps1 | iex"])
-    else:
-        if shutil.which("curl"):
-            run("curl -LsSf https://astral.sh/uv/install.sh | sh", shell=True)
-        elif shutil.which("wget"):
-            run("wget -qO- https://astral.sh/uv/install.sh | sh", shell=True)
-        else:
-            die("Neither curl nor wget is available to install uv. Install it manually "
-                "(https://docs.astral.sh/uv/getting-started/installation/) and re-run.")
-
-    # The installer drops uv under ~/.local/bin; surface it for this process.
-    bindir = _user_local_bin()
-    os.environ["PATH"] = str(bindir) + os.pathsep + os.environ.get("PATH", "")
-    if not shutil.which("uv"):
-        die(f"uv installed but not on PATH. Open a new shell (or add {bindir} to PATH) "
-            "and re-run.")
-    ok(f"uv installed: {subprocess.run(['uv', '--version'], capture_output=True, text=True).stdout.strip()}")
+    step("Installing Pillow (DMD-render dependency)")
+    try:
+        run([sys.executable, "-m", "pip", "install", "--upgrade", "pillow"])
+        ok("Pillow installed.")
+    except subprocess.CalledProcessError as e:
+        die(f"Failed to install Pillow via pip: {e}")
 
 
 # =============================================================================
@@ -751,7 +735,7 @@ def main() -> int:
     pinmame_src = Path(args.pinmame_src).expanduser().resolve() if args.pinmame_src \
         else (REPO_ROOT.parent / "pinmame")
 
-    ensure_uv()
+    ensure_python_deps()
 
     vpx_dir = install_vpx(root, args.force)
     if vpx_dir:
@@ -780,7 +764,7 @@ def main() -> int:
     if IS_WIN:
         print(f"  PINMAME_DIR   = {root / 'pinmame'}")
         print(f"  VPINMAME_DIR  = {root / 'vpinmame'}")
-    print(f"  uv            = {shutil.which('uv')}")
+    print(f"  python        = {sys.executable}")
     print()
     if IS_WIN:
         print("Env vars set at user scope. Open a new terminal to pick them up.")
@@ -789,7 +773,7 @@ def main() -> int:
         print("Restart your shell or run:  source ~/.zshenv")
     print("Next: from a game working dir (ROM at ./orig/<rom>.zip, table at")
     print("./tables/<rom>.vpx), record a session, e.g.")
-    print("  uv run record.py --rom congo_21")
+    print("  python record.py --rom congo_21")
     return 0
 
 

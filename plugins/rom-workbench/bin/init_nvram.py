@@ -1,8 +1,4 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.9"
-# dependencies = []
-# ///
+#!/usr/bin/env python3
 """Produce a freshly-reset NVRAM snapshot for a ROM zip.
 
 Boots the given ROM zip into libpinmame from blank NVRAM, lets it run for
@@ -151,7 +147,7 @@ def main() -> int:
     print(f"  Snapshot: {out}")
     print()
     print("Use with replay.py:")
-    print(f"  uv run <skill-dir>\\replay.py --rom {rom} --rom-zip '{rom_zip}' \\")
+    print(f"  python3 <skill-dir>\\replay.py --rom {rom} --rom-zip '{rom_zip}' \\")
     print(f"      --session <session-dir> --nvram '{out}'")
     return 0
 

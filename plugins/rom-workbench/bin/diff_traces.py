@@ -1,8 +1,4 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.9"
-# dependencies = []
-# ///
+#!/usr/bin/env python3
 """Diff two replay output directories for the same session against different ROMs.
 
 Each trace kind has its own diff strategy:

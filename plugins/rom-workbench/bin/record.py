@@ -1,8 +1,4 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.9"
-# dependencies = []
-# ///
+#!/usr/bin/env python3
 """Record a WPC gameplay session in Visual Pinball + VPinMAME (macOS + Windows).
 
 Launches Visual Pinball on the configured .vpx table with VPINMAME_SWITCHLOG set
@@ -25,7 +21,7 @@ The ROM zip is staged into VPinMAME's roms/ directory just before launch — VP
 loads ROMs from there by gamename, so it has to live there at record time.
 
 Usage:
-    uv run record.py [--rom congo_21] [--rom-zip <path.zip>] [--table <path.vpx>]
+    python3 record.py [--rom congo_21] [--rom-zip <path.zip>] [--table <path.vpx>]
                      [--out-dir <dir>] [--max-sec 600]
 
 Requires VPINBALL_DIR and (macOS) PINMAME_DIR / (Windows) VPINMAME_DIR in the
@@ -339,7 +335,7 @@ def main() -> int:
     if timed_out:
         warn(f"Session timed out after {args.max_sec}s.")
     print()
-    print("Next: uv run replay.py --rom "
+    print("Next: python3 replay.py --rom "
           f"{args.rom} --rom-zip <zip> --session {out_dir} --nvram <nv> --trace state,dmd")
     return 0
 

@@ -88,13 +88,13 @@ Good for "catch every hit of X over a whole boot" and watchpoint sweeps.
 
 ```powershell
 # Break before each listed PC; single-step N after each hit; dump memory windows.
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom congo_21 `
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom congo_21 `
   --rom-zip .\dist\congo_21_modded.zip --session .\sessions\<utc> `
   --nvram .\dist\congo_21_modded.nv --trace dbg `
   --break-pc 0x403F --dbg-step-after 30 --dbg-mem '@S:2,@X:16,0x0011'
 
 # Find every writer/reader of a RAM slot.
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/replay.py ... --trace dbg --watch-w '0x1670' --dbg-mem '0x0011'
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/replay.py ... --trace dbg --watch-w '0x1670' --dbg-mem '0x0011'
 ```
 
 `--dbg-mem` windows are read via `PinmameReadMainCPUByte` while the CPU is
@@ -112,17 +112,17 @@ probe, state survives between commands. This is the big lever for iterative work
 
 ```powershell
 # Launch in the background; wait for "[dbg] paused at <loc>".
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom congo_21 `
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom congo_21 `
   --rom-zip .\dist\congo_21_modded.zip --session .\sessions\<utc> `
   --nvram .\dist\congo_21_modded.nv --interactive --break-pc 0x4037
 # Then drive it (each call = one command; the emulator stays paused):
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py regs
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py dis @pc 12
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py mem @u 24
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py step 20
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py continue until 0x4067
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py wp add w 0x1670
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py quit
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py regs
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py dis @pc 12
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py mem @u 24
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py step 20
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py continue until 0x4067
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py wp add w 0x1670
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py quit
 ```
 
 Commands: `regs | mem <addr> [len] | dis [addr] [n] | step [n] |
@@ -138,17 +138,17 @@ Self-contained, stdlib-only, bank-aware. Reads ROM bytes directly — fast,
 faithful. Feed it the `loc` from any live breakpoint.
 
 ```powershell
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/rom.py info                  # ROM size, version byte, checksum, RESET vec
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/rom.py dump '$FFEC' 16        # system-ROM address
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/rom.py dump '$4C0E@p37' 32    # banked: page $37, addr $4C0E
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/rom.py dump 0x7FFEC 16        # raw file offset
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/rom.py search "BD 90 C4"      # byte sequence (JSR $90C4)
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/rom.py search '"Copyright"'   # ASCII string
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/rom.py strings 6 --section sys # printable ASCII runs ≥ 6 chars
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/rom.py dis '$403F@p39' 40     # 6809 disassembly (n bytes)
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/rom.py xref '$43A6@p39'       # who calls/jumps to an address
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/rom.py xref '$1670' --data    # +LD/ST data references
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/rom.py funcs --page 39        # discovered function starts
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/rom.py info                  # ROM size, version byte, checksum, RESET vec
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/rom.py dump '$FFEC' 16        # system-ROM address
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/rom.py dump '$4C0E@p37' 32    # banked: page $37, addr $4C0E
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/rom.py dump 0x7FFEC 16        # raw file offset
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/rom.py search "BD 90 C4"      # byte sequence (JSR $90C4)
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/rom.py search '"Copyright"'   # ASCII string
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/rom.py strings 6 --section sys # printable ASCII runs ≥ 6 chars
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/rom.py dis '$403F@p39' 40     # 6809 disassembly (n bytes)
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/rom.py xref '$43A6@p39'       # who calls/jumps to an address
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/rom.py xref '$1670' --data    # +LD/ST data references
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/rom.py funcs --page 39        # discovered function starts
 ```
 
 Without `--rom`, auto-detects `orig/*.zip` in the working directory; otherwise

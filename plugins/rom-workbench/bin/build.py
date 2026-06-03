@@ -1,8 +1,4 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.9"
-# dependencies = []
-# ///
+#!/usr/bin/env python3
 """Apply JSON patch specs to a WPC ROM zip and produce a patched ROM zip.
 
 Reads every *.json file in --patch-dir (sorted by name, so prefix numbers
@@ -34,7 +30,7 @@ ROM zip and outputs follow the working-dir convention:
     output    ./dist/<rom-stem>_modded.zip   (override: --out-zip)
 
 Usage:
-    uv run build.py [--rom congo_21] [--rom-zip <path.zip>] [--patch-dir <dir>]
+    python3 build.py [--rom congo_21] [--rom-zip <path.zip>] [--patch-dir <dir>]
                     [--out-zip <path.zip>] [--disable-checksum] [--deploy] [--force]
 """
 
@@ -373,7 +369,7 @@ def main() -> int:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(out_zip.read_bytes())
             ok(f"Copied to {dest}")
-            warn(f"To test: uv run record.py --rom {rom_stem}_modded")
+            warn(f"To test: python3 record.py --rom {rom_stem}_modded")
 
     # --- Summary -------------------------------------------------------------
     print("\n" + _c(_C.GREEN, "Build complete."))
@@ -383,8 +379,8 @@ def main() -> int:
     print()
     out_nv = out_zip.with_suffix(".nv")
     print(_c(_C.YELLOW, "Next steps:"))
-    print(f"  NVRAM:    uv run init_nvram.py --rom-zip {out_zip} --force")
-    print(f"  Validate: uv run replay.py --rom <name> --rom-zip {out_zip} "
+    print(f"  NVRAM:    python3 init_nvram.py --rom-zip {out_zip} --force")
+    print(f"  Validate: python3 replay.py --rom <name> --rom-zip {out_zip} "
           f"--session <session> --nvram {out_nv} --trace state,dmd")
     return 0
 

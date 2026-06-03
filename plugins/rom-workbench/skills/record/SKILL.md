@@ -41,27 +41,27 @@ directory laid out by convention — ROM zip at `.\orig\<rom>.zip` (or
 
 ```powershell
 # Record a session. Finds the ROM/table for --rom by convention. Press Ctrl-C to stop.
-uv run '${CLAUDE_PLUGIN_ROOT}/bin/record.py' --rom congo_21
+python3 '${CLAUDE_PLUGIN_ROOT}/bin/record.py' --rom congo_21
 
 # One-time per ROM zip: produce a freshly-reset NVRAM snapshot so replays
 # don't pay the boot-time factory-reset cost and start from explicit state.
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/init_nvram.py --rom-zip .\orig\congo_21.zip         # -> .\orig\congo_21.nv
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/init_nvram.py --rom-zip .\dist\congo_21_modded.zip  # -> .\dist\congo_21_modded.nv
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/init_nvram.py --rom-zip .\orig\congo_21.zip         # -> .\orig\congo_21.nv
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/init_nvram.py --rom-zip .\dist\congo_21_modded.zip  # -> .\dist\congo_21_modded.nv
 
 # Replay headlessly against a single ROM with just the state-event timeline.
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom congo_21 --rom-zip .\orig\congo_21.zip `
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom congo_21 --rom-zip .\orig\congo_21.zip `
     --session .\sessions\<utc> --nvram .\orig\congo_21.nv --trace state
 
 # Investigate a code path with the in-process CPU debugger.
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom congo_21 --rom-zip .\dist\congo_21_modded.zip `
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom congo_21 --rom-zip .\dist\congo_21_modded.zip `
     --session .\sessions\<utc> --nvram .\orig\congo_21.nv `
     --trace state,dbg --break-pc 0xD9A6 --dbg-step-after 80
 
 # Validate a mod: run the same session against the modded ROM, then (optionally)
 # diff the two trace dirs.
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom congo_21 --rom-zip .\dist\congo_21_modded.zip `
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom congo_21 --rom-zip .\dist\congo_21_modded.zip `
     --session .\sessions\<utc> --nvram .\dist\congo_21_modded.nv --trace state,dmd
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/diff_traces.py `
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/diff_traces.py `
     --a .\sessions\<utc>\replays\congo_21\<utc> `
     --b .\sessions\<utc>\replays\congo_21_modded\<utc> `
     --out .\sessions\<utc>\replays\diff
@@ -81,10 +81,9 @@ and patched DLLs come from. Specifically needed:
 - A game working dir with the ROM zip at `.\orig\<rom>.zip` (or `.\dist\<rom>.zip`)
   and the table at `.\tables\<rom>.vpx`. `record.py` stages the ROM into VP's
   `roms/` dir itself, just before launch.
-- `uv` on PATH (installed by `setup`). Every Python tool here runs via
-  `uv run`, which provisions a matching interpreter and each script's declared
-  dependencies (e.g. Pillow for DMD rendering) into an ephemeral environment —
-  no manual `pip install` is ever needed.
+- `python3` on PATH (3.9+). Every Python tool here runs as `python3 <tool>.py`.
+  The tools are stdlib-only except the DMD-render tools, which need Pillow — the
+  `setup` skill `pip install`s it for you.
 
 If a script complains "PINMAME_DIR not set" or similar, point at
 `setup`.
@@ -95,7 +94,7 @@ If a script complains "PINMAME_DIR not set" or similar, point at
 right Visual Pinball binary for the OS and both produce an identical `session.jsonl`.
 
 ```bash
-uv run '${CLAUDE_PLUGIN_ROOT}/bin/record.py' \
+python3 '${CLAUDE_PLUGIN_ROOT}/bin/record.py' \
     [--rom congo_21] \                     # default: congo_21
     [--rom-zip '<path-to-zip>'] \          # default: ./orig/<rom>.zip, then ./dist/<rom>.zip
     [--table '<path-to-vpx>'] \            # default: ./tables/<rom>.vpx
@@ -114,7 +113,7 @@ Launches Visual Pinball with the full table. The patched VPinMAME DLL (`VPinMAME
 ## NVRAM init: `init_nvram.py`
 
 ```powershell
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/init_nvram.py `
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/init_nvram.py `
     --rom-zip '<path-to-rom-zip>' `       # required
     [--rom <name>] `                      # default: zip stem with _modded/_mod stripped
     [--out '<path>'] `                    # default: <dir-of-rom-zip>\<zip-stem>.nv
@@ -130,7 +129,7 @@ The snapshot is keyed by ROM zip, so factory and modded ROMs get distinct cached
 ## Replay: `replay.py`
 
 ```powershell
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/replay.py `
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/replay.py `
     --rom <name> `                            # required, e.g. congo_21
     --rom-zip '<path-to-rom-zip>' `           # required: factory or modded zip
     --session '<sessions/...>' `              # required: dir with session.jsonl
@@ -266,18 +265,18 @@ commands.
 
 ```powershell
 # Launch in the background; it stays alive serving the control socket.
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom congo_21 `
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom congo_21 `
     --rom-zip .\dist\congo_21_modded.zip --session .\sessions\<utc> `
     --nvram .\dist\congo_21_modded.nv `
     --interactive --break-pc 0x4037 [--dbg-port 47655]
 # Wait for "[dbg] paused at <loc>" in its output, then drive it with dbg.py:
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py regs
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py dis @pc 12
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py mem @u 24
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py step 20
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py continue until 0x4067
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py wp add w 0x1670
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py quit          # stops the emulator, ends the session
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py regs
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py dis @pc 12
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py mem @u 24
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py step 20
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py continue until 0x4067
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py wp add w 0x1670
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/dbg.py quit          # stops the emulator, ends the session
 ```
 
 Commands: `regs | mem <addr> [len] | dis [addr] [n] | step [n] |
@@ -306,7 +305,7 @@ keeps the emulator alive while the CPU is frozen between commands.
 Two single-sided runs can be compared after the fact:
 
 ```powershell
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/diff_traces.py `
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/diff_traces.py `
     --a '<run-A-OutDir>' --b '<run-B-OutDir>' `
     --out '<diff-OutDir>'
 ```
@@ -350,13 +349,13 @@ To eyeball them, use `render_dmd.py` (Pillow required):
 
 ```powershell
 # All frames -> <replay-OutDir>/dmd_png/
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/render_dmd.py <replay-OutDir>
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/render_dmd.py <replay-OutDir>
 
 # Just frames 0, 5, 10..20 at 4x upscale
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/render_dmd.py <replay-OutDir> --frames 0,5,10-20 --scale 4
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/render_dmd.py <replay-OutDir> --frames 0,5,10-20 --scale 4
 
 # Custom output dir
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/render_dmd.py <replay-OutDir> --out my_pngs
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/render_dmd.py <replay-OutDir> --out my_pngs
 ```
 
 Default scale is 4x (so the standard 128x32 DMD becomes 512x128) using
@@ -367,7 +366,7 @@ timecode that matches the trace/switch-log `t`), use `render_dmd_video.py`
 (Pillow required; encodes H.264 mp4 via ffmpeg, falls back to GIF):
 
 ```powershell
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/render_dmd_video.py <replay-OutDir> [--fps 30] [--scale 6]
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/render_dmd_video.py <replay-OutDir> [--fps 30] [--scale 6]
 # -> <replay-OutDir>/dmd.mp4
 ```
 

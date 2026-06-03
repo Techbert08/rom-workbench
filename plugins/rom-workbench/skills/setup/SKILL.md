@@ -32,7 +32,7 @@ on macOS, `~/.local/share/rom-workbench/` on Linux.
 | Visual Pinball X 10.8.0 | `<root>\vpinball` | `VPINBALL_DIR` |
 | Patched libpinmame.dll (prebuilt from `bin/`) | `<root>\pinmame` | `PINMAME_DIR` |
 | VPinMAME COM (regsvr32-registered) | `<root>\vpinmame` | `VPINMAME_DIR` |
-| uv (installed if missing) | `%USERPROFILE%\.local\bin` | — |
+| Pillow (via `pip`, for the DMD-render tools) | this Python's environment | — |
 | Patched VPinMAME64.dll | deployed over the installed VPinMAME | — |
 
 No PinMAME standalone is downloaded: replay loads only the self-contained
@@ -46,7 +46,7 @@ the directory layout VP's COM path expects.
 |---|---|---|
 | Visual Pinball X (macOS GL build) | `<root>/vpinball` | `VPINBALL_DIR` |
 | Patched libpinmame.dylib | `<root>/pinmame` | `PINMAME_DIR` |
-| uv (installed if missing) | `~/.local/bin` | — |
+| Pillow (via `pip`, for the DMD-render tools) | this Python's environment | — |
 
 On macOS the patched `libpinmame.dylib` ships prebuilt in `bin/` for the common
 case; `setup-pinball.py` only **builds from source** (from `--pinmame-src`,
@@ -58,14 +58,11 @@ Env vars are written to `~/.zshenv` and `~/.bash_profile`.
 ### `setup-pinball.py` — cross-platform toolchain installer
 
 One stdlib-only Python script handles **both** macOS and Windows (replacing the
-old `setup-pinball.sh` / `setup-pinball.ps1` pair). Run it with either Python or uv:
+old `setup-pinball.sh` / `setup-pinball.ps1` pair). It requires Python 3.9+ and
+pip on PATH; run it directly:
 
 ```bash
-# Fresh machine (no uv yet): plain Python — it installs uv, then the tools.
 python3 '${CLAUDE_PLUGIN_ROOT}/bin/setup-pinball.py' [--force] [--install-root <dir>] [--pinmame-src <path>]
-
-# Once uv is available, the uv-native invocation works too:
-uv run '${CLAUDE_PLUGIN_ROOT}/bin/setup-pinball.py'
 ```
 
 Everything installs under a **per-user data directory** (no admin needed for the
@@ -81,7 +78,7 @@ underneath, plus a `cache/`:
 Override with `--install-root`. Idempotent; pass `--force` to re-download/rebuild.
 
 Steps:
-1. **Ensure uv** (install via https://astral.sh/uv if missing). The Python tools run via `uv run`, so uv — not a system Python — is the only ongoing Python prerequisite.
+1. **Verify pip and install Pillow** — confirm `pip` is available for the launching interpreter, then `pip install pillow` (the only third-party dependency, used by the DMD-render tools). Every other tool is stdlib-only and runs as `python3 <tool>.py`.
 2. **Visual Pinball X** — download + install into `<root>/vpinball/` (skips gracefully if the pinned release has no asset for this OS/arch; replay doesn't need VPX).
 3. **Patched libpinmame** — deploy the prebuilt patched library from `bin/` into `<root>/pinmame/` (replay loads it via ctypes; it's self-contained, so nothing is downloaded).
    - **macOS** — install `libpinmame.dylib` (prefer the arch-matched prebuilt in `bin/`; otherwise build from `--pinmame-src`, default `../pinmame` beside the repo). Also deploy it into the VPX bundle, ad-hoc re-sign, and run a Gatekeeper trial-launch.
@@ -161,7 +158,7 @@ $PinmameSrc = 'C:\path\to\your\pinmame'   # your local clone of the patched bran
 # setup-pinball.py — its deploy step (re)installs the DLL into PINMAME_DIR.
 Copy-Item "$PinmameSrc\build\libpinmame\Release\pinmame64.dll" `
           ${CLAUDE_PLUGIN_ROOT}\lib\libpinmame.dll -Force
-uv run '${CLAUDE_PLUGIN_ROOT}/bin/setup-pinball.py'
+python3 '${CLAUDE_PLUGIN_ROOT}/bin/setup-pinball.py'
 ```
 
 If you'd rather skip the downloads/env checks entirely, the patched DLL just needs to land on top of the installed one: copy it directly over `%LOCALAPPDATA%\rom-workbench\pinmame\libpinmame*.dll`.
@@ -170,8 +167,9 @@ Forgetting the deploy step makes `replay.py` fall back to the un-patched DLL. Th
 
 ## Prerequisites
 
-To launch `setup-pinball.py` the first time you need **either** uv **or** any
-Python 3.9+ (`python3 setup-pinball.py` will then install uv for you). After that:
+You need **Python 3.9+ and pip** on PATH. `setup-pinball.py` runs directly under
+that interpreter and `pip install`s Pillow; every day-to-day tool then runs as
+`python3 <tool>.py`. Additionally:
 
 ### Windows
 - **One Administrator PowerShell** for the one-time `regsvr32 VPinMAME.dll` step.
@@ -179,7 +177,7 @@ Python 3.9+ (`python3 setup-pinball.py` will then install uv for you). After tha
 ### macOS
 - **cmake 3.25+**, **Xcode Command Line Tools** (`xcode-select --install`), **git** — only needed for the rare libpinmame *source-build* fallback (the prebuilt `lib/libpinmame.dylib` covers the common case). `setup-pinball.py` checks these only when it actually has to build.
 
-`uv` is installed by `setup-pinball.py` if missing and then runs every Python tool — no system Python is needed for day-to-day work.
+The only third-party Python dependency is Pillow (used by the DMD-render tools), installed by `setup-pinball.py` via pip; everything else is stdlib-only.
 
 ## File layout
 

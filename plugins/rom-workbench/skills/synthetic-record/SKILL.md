@@ -134,7 +134,7 @@ s.write("sessions/<out>", labels=[...], notes="...")
 Validate before replaying:
 
 ```powershell
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/synth.py validate sessions\<out>
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/synth.py validate sessions\<out>
 ```
 
 ## Replay & verify
@@ -142,12 +142,12 @@ uv run ${CLAUDE_PLUGIN_ROOT}/bin/synth.py validate sessions\<out>
 A synthetic session is a normal session — replay it with `record`:
 
 ```powershell
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom <rom> --rom-zip <zip> `
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/replay.py --rom <rom> --rom-zip <zip> `
     --session sessions\<out> --nvram <nv> --trace state,dmd,dbg `
     --watch-w 0x<addr> --out-dir sessions\<out>\replays\<stem>\run1 --overwrite
 
 # Eyeball it: render the DMD to a real-time mp4 with burned-in timecode.
-uv run ${CLAUDE_PLUGIN_ROOT}/bin/render_dmd_video.py sessions\<out>\replays\<stem>\run1
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/render_dmd_video.py sessions\<out>\replays\<stem>\run1
 ```
 
 Confirm the scenario actually played: watch the RAM that proves the state you

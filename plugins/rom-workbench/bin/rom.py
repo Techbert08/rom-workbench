@@ -1,16 +1,12 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.9"
-# dependencies = []
-# ///
+#!/usr/bin/env python3
 """
 WPC ROM binary explorer.
 
 Usage:
-  uv run rom.py [--rom <zip-or-bin>] info
-  uv run rom.py [--rom <zip-or-bin>] dump <addr> [length]
-  uv run rom.py [--rom <zip-or-bin>] search <"string"> | <HH HH ...>
-  uv run rom.py [--rom <zip-or-bin>] strings [minlen] [--section all|banked|sys]
+  python3 rom.py [--rom <zip-or-bin>] info
+  python3 rom.py [--rom <zip-or-bin>] dump <addr> [length]
+  python3 rom.py [--rom <zip-or-bin>] search <"string"> | <HH HH ...>
+  python3 rom.py [--rom <zip-or-bin>] strings [minlen] [--section all|banked|sys]
 
 --rom defaults to auto-detect: searches orig/*.zip relative to CWD, then the
 directory containing this script.

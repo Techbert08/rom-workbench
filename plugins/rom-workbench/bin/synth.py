@@ -1,8 +1,4 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.9"
-# dependencies = []
-# ///
+#!/usr/bin/env python3
 """
 synthetic-record: author a *replayable* WPC switch-event session by hand.
 
@@ -25,7 +21,7 @@ This module is the Python builder. Typical use (from a scenario script):
     s.keepalive("bottom_jet", every=7.0, start=16.0, stop=s.end())
     s.write("sessions/<utc>-synth", labels=["satellite-transfer"], notes="...")
 
-CLI:  uv run synth.py validate <session-dir>
+CLI:  python3 synth.py validate <session-dir>
 """
 from __future__ import annotations
 

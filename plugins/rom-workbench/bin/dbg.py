@@ -1,8 +1,4 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.9"
-# dependencies = []
-# ///
+#!/usr/bin/env python3
 """Thin client for the persistent interactive debugger session.
 
 The session is a long-lived `replay.py --interactive` process that boots a ROM
@@ -13,7 +9,7 @@ booted and paused between calls, so successive probes share one boot and each
 is informed by the last (no re-running from POST).
 
 Usage:
-    uv run dbg.py [--port 47655] <command ...>
+    python3 dbg.py [--port 47655] <command ...>
 
 Commands (also: `dbg.py help`):
     regs                      registers + resolved $PC@pBANK location
@@ -30,11 +26,11 @@ Address forms accepted anywhere an <addr>/<pc> is expected:
     0xNNNN   $NNNN   NNNN(hex)   @X @S+2 @U-1   (register-relative)
 
 Examples:
-    uv run dbg.py regs
-    uv run dbg.py dis @pc 12
-    uv run dbg.py mem @x 8
-    uv run dbg.py continue until 0x4067
-    uv run dbg.py step 5
+    python3 dbg.py regs
+    python3 dbg.py dis @pc 12
+    python3 dbg.py mem @x 8
+    python3 dbg.py continue until 0x4067
+    python3 dbg.py step 5
 """
 from __future__ import annotations
 
