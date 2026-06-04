@@ -21,6 +21,8 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
+from workbench_env import bootstrap_venv
+
 
 def _read_jsonl(p: Path) -> list[dict]:
     out: list[dict] = []
@@ -135,6 +137,7 @@ def render_html(report: dict) -> str:
 
 
 def main(argv: list[str]) -> int:
+    bootstrap_venv()  # re-exec under the toolkit venv if not already there
     ap = argparse.ArgumentParser()
     ap.add_argument("--a", type=Path, required=True, help="replay output dir (factory)")
     ap.add_argument("--b", type=Path, required=True, help="replay output dir (modded)")

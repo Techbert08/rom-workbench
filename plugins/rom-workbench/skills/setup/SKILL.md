@@ -21,9 +21,18 @@ For everyday "analyze a ROM" / "replay a session" / "set a breakpoint" requests,
 
 ## What gets installed and where
 
-Everything lands under one per-user data root (see "Setup scripts" below):
-`%LOCALAPPDATA%\rom-workbench\` on Windows, `~/Library/Application Support/rom-workbench/`
-on macOS, `~/.local/share/rom-workbench/` on Linux.
+Everything lands under the plugin's **persistent data directory**
+(`${CLAUDE_PLUGIN_DATA}`, i.e. `~/.claude/plugins/data/<id>/`), which survives
+plugin updates and is cleaned up when the plugin is uninstalled. The heavy
+artifacts (`vpinball/`, `pinmame/`, Windows `vpinmame/`, `cache/`) and a Python
+`venv/` live there. (Run outside a plugin context, it falls back to a per-user
+app-data root: `%LOCALAPPDATA%\rom-workbench\` on Windows,
+`~/Library/Application Support/rom-workbench/` on macOS,
+`~/.local/share/rom-workbench/` on Linux.)
+
+The small `config.env` pointer file stays at the **stable** app-data location
+regardless, so every tool can find it (and, through it, the data dir + venv)
+without an environment variable to bootstrap.
 
 ### Windows
 
@@ -32,7 +41,7 @@ on macOS, `~/.local/share/rom-workbench/` on Linux.
 | Visual Pinball X 10.8.0 | `<root>\vpinball` | `VPINBALL_DIR` |
 | Patched libpinmame.dll (prebuilt from `bin/`) | `<root>\pinmame` | `PINMAME_DIR` |
 | VPinMAME COM (regsvr32-registered) | `<root>\vpinmame` | `VPINMAME_DIR` |
-| Pillow (via `pip`, for the DMD-render tools) | this Python's environment | — |
+| Python venv + Pillow (for the DMD-render tools) | `<root>\venv` | — |
 | Patched VPinMAME64.dll | deployed over the installed VPinMAME | — |
 
 No PinMAME standalone is downloaded: replay loads only the self-contained
@@ -46,7 +55,7 @@ the directory layout VP's COM path expects.
 |---|---|---|
 | Visual Pinball X (macOS GL build) | `<root>/vpinball` | `VPINBALL_DIR` |
 | Patched libpinmame.dylib | `<root>/pinmame` | `PINMAME_DIR` |
-| Pillow (via `pip`, for the DMD-render tools) | this Python's environment | — |
+| Python venv + Pillow (for the DMD-render tools) | `<root>/venv` | — |
 
 On macOS the patched `libpinmame.dylib` ships prebuilt in `bin/` for the common
 case; `setup-pinball.py` only **builds from source** (from `--pinmame-src`,
@@ -59,33 +68,37 @@ Env vars are written to `~/.zshenv` and `~/.bash_profile`.
 
 One stdlib-only Python script handles **both** macOS and Windows (replacing the
 old `setup-pinball.sh` / `setup-pinball.ps1` pair). It requires Python 3.9+ and
-pip on PATH; run it directly:
+pip on PATH; run it directly, passing the plugin data dir so the install lands
+there:
 
 ```bash
-python3 '${CLAUDE_PLUGIN_ROOT}/bin/setup-pinball.py' [--force] [--install-root <dir>] [--pinmame-src <path>]
+python3 '${CLAUDE_PLUGIN_ROOT}/bin/setup-pinball.py' --plugin-data '${CLAUDE_PLUGIN_DATA}' [--force] [--pinmame-src <path>]
 ```
 
-Everything installs under a **per-user data directory** (no admin needed for the
-files themselves), with `vpinball/`, `pinmame/` and — on Windows — `vpinmame/`
-underneath, plus a `cache/`:
+Everything installs under the plugin's **persistent data directory** (no admin
+needed for the files themselves), with `vpinball/`, `pinmame/`, a `venv/` and —
+on Windows — `vpinmame/` underneath, plus a `cache/`:
 
-| OS | Install root |
+| Context | Install root |
 |---|---|
-| macOS | `~/Library/Application Support/rom-workbench/` |
-| Windows | `%LOCALAPPDATA%\rom-workbench\` |
-| Linux | `$XDG_DATA_HOME` (or `~/.local/share`)`/rom-workbench/` |
+| Plugin (normal) | `${CLAUDE_PLUGIN_DATA}` = `~/.claude/plugins/data/<id>/` |
+| Fallback (macOS) | `~/Library/Application Support/rom-workbench/` |
+| Fallback (Windows) | `%LOCALAPPDATA%\rom-workbench\` |
+| Fallback (Linux) | `$XDG_DATA_HOME` (or `~/.local/share`)`/rom-workbench/` |
 
-Override with `--install-root`. Idempotent; pass `--force` to re-download/rebuild.
+`--plugin-data` defaults to the `CLAUDE_PLUGIN_DATA` env var; override the whole
+root with `--install-root`. Idempotent; pass `--force` to re-download/rebuild
+(also recreates the venv).
 
 Steps:
-1. **Verify pip and install Pillow** — confirm `pip` is available for the launching interpreter, then `pip install pillow` (the only third-party dependency, used by the DMD-render tools). Every other tool is stdlib-only and runs as `python3 <tool>.py`.
+1. **Create the venv and install Pillow** — confirm `pip` is available for the launching interpreter, create a virtual environment at `<root>/venv`, then `pip install pillow` **into that venv** (the only third-party dependency, used by the DMD-render tools). Every tool re-execs itself into this venv on startup (`workbench_env.bootstrap_venv()`), so Pillow resolves no matter which `python3` launched it — on Windows or POSIX.
 2. **Visual Pinball X** — download + install into `<root>/vpinball/` (skips gracefully if the pinned release has no asset for this OS/arch; replay doesn't need VPX).
 3. **Patched libpinmame** — deploy the prebuilt patched library from `bin/` into `<root>/pinmame/` (replay loads it via ctypes; it's self-contained, so nothing is downloaded).
    - **macOS** — install `libpinmame.dylib` (prefer the arch-matched prebuilt in `bin/`; otherwise build from `--pinmame-src`, default `../pinmame` beside the repo). Also deploy it into the VPX bundle, ad-hoc re-sign, and run a Gatekeeper trial-launch.
-   - **Windows** — copy `lib/libpinmame.dll` into `<root>/pinmame/`. Then download VPinMAME COM into `<root>/vpinmame/` (for `bass64.dll` + the layout), deploy the patched `VPinMAME64.dll`, and `regsvr32`-register it (needs an elevated shell once — the script detects this and prints the exact relaunch command rather than failing).
+   - **Windows** — copy `lib/libpinmame.dll` into `<root>/pinmame/`. Then download VPinMAME COM into `<root>/vpinmame/` (for `bass64.dll` + the layout), deploy the patched `VPinMAME64.dll`, and `regsvr32`-register it so VPX's COM `VPinMAME.Controller` loads **our** patched build (the switch recorder `record.py` depends on). Registration is forced when a *different* VPinMAME DLL currently owns the COM server — a common cause of "recording produced no switches" — and skipped only when ours is already registered. Needs Administrator once; the script triggers a UAC prompt and waits, printing the exact manual relaunch command if elevation is declined.
 4. **Persist the install dirs** — `VPINBALL_DIR`, `PINMAME_DIR`, and (Windows) `VPINMAME_DIR` — two ways:
    - As user-scope env vars, for interactive shells: macOS/Linux write `~/.zshenv` and `~/.bash_profile`; Windows writes the user environment (HKCU).
-   - Into `config.env` at the platform-default data dir (`%LOCALAPPDATA%\rom-workbench\config.env`, `~/Library/Application Support/rom-workbench/config.env`, or `$XDG_DATA_HOME/rom-workbench/config.env`). Every entrypoint calls `workbench_env.load_config()` at startup to read it, so the toolchain works in a fresh shell that never inherited the user env vars — no "open a new terminal" step. An explicit shell export still wins over the file.
+   - Into `config.env` at the **stable** platform-default app-data dir (`%LOCALAPPDATA%\rom-workbench\config.env`, `~/Library/Application Support/rom-workbench/config.env`, or `$XDG_DATA_HOME/rom-workbench/config.env`) — note this stays at the app-data location even though the artifacts now live under `${CLAUDE_PLUGIN_DATA}`. The file also records `CLAUDE_PLUGIN_DATA` itself, which is how each tool locates the venv to re-exec into (that variable is *not* in the ambient shell the tools are launched from). Every entrypoint calls `workbench_env.load_config()` at startup to read it, so the toolchain works in a fresh shell that never inherited the user env vars — no "open a new terminal" step. An explicit shell export still wins over the file.
 
 Downloads are SHA-256 verified against a sidecar recorded on first use (trust-on-first-use). To pin upstream hashes, fill in the empty `expected_sha` constants near the top of the script.
 
@@ -101,9 +114,14 @@ convention from the working directory:
 
 `record.py` stages the ROM zip into VP's `roms/` dir (`$PINMAME_DIR/roms` on
 macOS, `%VPINMAME_DIR%\roms` on Windows) itself, just before launch — VP loads
-ROMs from there by gamename, so it only has to live there at record time. Drop a
-game's files into `./orig/` and `./tables/` and run `record.py --rom <name>`;
-nothing to register.
+ROMs from there by gamename, so it only has to live there at record time. On
+**Windows** the full VPX build finds ROMs through the VPinMAME COM server, which
+reads them from the registry (`HKCU\…\Visual PinMame\globals\rompath`), *not* an
+env var — so `record.py` points `rompath` (plus `nvram_path`/`cfg_path`) at that
+staged dir just before launch and restores the previous values afterward, so a
+recording always finds the ROM no matter what other VPinMAME install last touched
+the registry. Drop a game's files into `./orig/` and `./tables/` and run
+`record.py --rom <name>`; nothing to register.
 
 ## Acquiring game files (ROM zip + VPX table)
 
@@ -160,18 +178,20 @@ $PinmameSrc = 'C:\path\to\your\pinmame'   # your local clone of the patched bran
 # setup-pinball.py — its deploy step (re)installs the DLL into PINMAME_DIR.
 Copy-Item "$PinmameSrc\build\libpinmame\Release\pinmame64.dll" `
           ${CLAUDE_PLUGIN_ROOT}\lib\libpinmame.dll -Force
-python3 '${CLAUDE_PLUGIN_ROOT}/bin/setup-pinball.py'
+python3 '${CLAUDE_PLUGIN_ROOT}/bin/setup-pinball.py' --plugin-data '${CLAUDE_PLUGIN_DATA}'
 ```
 
-If you'd rather skip the downloads/env checks entirely, the patched DLL just needs to land on top of the installed one: copy it directly over `%LOCALAPPDATA%\rom-workbench\pinmame\libpinmame*.dll`.
+If you'd rather skip the downloads/env checks entirely, the patched DLL just needs to land on top of the installed one: copy it directly over `${CLAUDE_PLUGIN_DATA}\pinmame\libpinmame*.dll`.
 
 Forgetting the deploy step makes `replay.py` fall back to the un-patched DLL. The giveaway error is `PinmameDebugAttach not found`.
 
 ## Prerequisites
 
 You need **Python 3.9+ and pip** on PATH. `setup-pinball.py` runs directly under
-that interpreter and `pip install`s Pillow; every day-to-day tool then runs as
-`python3 <tool>.py`. Additionally:
+that interpreter and uses it to build the toolkit `venv/` (into which Pillow is
+installed). Every day-to-day tool is still launched as `python3 <tool>.py`, but
+re-execs itself into that venv on startup, so the launching interpreter only
+needs to be able to *create* a venv. Additionally:
 
 ### Windows
 - **One Administrator PowerShell** for the one-time `regsvr32 VPinMAME.dll` step.
@@ -179,17 +199,30 @@ that interpreter and `pip install`s Pillow; every day-to-day tool then runs as
 ### macOS
 - **cmake 3.25+**, **Xcode Command Line Tools** (`xcode-select --install`), **git** — only needed for the rare libpinmame *source-build* fallback (the prebuilt `lib/libpinmame.dylib` covers the common case). `setup-pinball.py` checks these only when it actually has to build.
 
-The only third-party Python dependency is Pillow (used by the DMD-render tools), installed by `setup-pinball.py` via pip; everything else is stdlib-only.
+The only third-party Python dependency is Pillow (used by the DMD-render tools), installed into the venv by `setup-pinball.py`; everything else is stdlib-only.
 
 ## File layout
 
+The plugin ships its code under `${CLAUDE_PLUGIN_ROOT}`; setup writes the
+installed toolchain + venv under the persistent data dir `${CLAUDE_PLUGIN_DATA}`:
+
 ```
-${CLAUDE_PLUGIN_ROOT}/
-├── skills/setup/SKILL.md   # this file
+${CLAUDE_PLUGIN_ROOT}/           # shipped with the plugin (read-only)
+├── skills/setup/SKILL.md        # this file
 ├── bin/
-│   └── setup-pinball.py    # cross-platform VP + libpinmame (+ VPinMAME on Windows) installer
-└── lib/                    # prebuilt patched libraries this script deploys
-    ├── libpinmame.dylib    # macOS
-    ├── libpinmame.dll      # Windows
-    └── VPinMAME64.dll      # Windows (VPinMAME COM recorder)
+│   ├── setup-pinball.py         # cross-platform VP + libpinmame (+ VPinMAME on Windows) installer
+│   └── workbench_env.py         # shared config + venv bootstrap (bootstrap_venv)
+└── lib/                         # prebuilt patched libraries this script deploys
+    ├── libpinmame.dylib         # macOS
+    ├── libpinmame.dll           # Windows
+    └── VPinMAME64.dll           # Windows (VPinMAME COM recorder)
+
+${CLAUDE_PLUGIN_DATA}/           # written by setup; survives plugin updates
+├── venv/                        # Python venv (Pillow); every tool re-execs into it
+├── vpinball/                    # Visual Pinball X         → VPINBALL_DIR
+├── pinmame/                     # patched libpinmame       → PINMAME_DIR
+├── vpinmame/                    # VPinMAME COM (Windows)   → VPINMAME_DIR
+└── cache/                       # downloaded archives (trust-on-first-use SHA-256)
 ```
+
+(`config.env` lives separately, at the stable app-data path — see step 4 above.)

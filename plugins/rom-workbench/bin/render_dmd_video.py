@@ -39,6 +39,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from workbench_env import bootstrap_venv
+
+bootstrap_venv()  # re-exec under the toolkit venv (where Pillow lives) before importing it
+
 try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError as e:

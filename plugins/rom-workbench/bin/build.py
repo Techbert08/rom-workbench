@@ -44,7 +44,7 @@ import zipfile
 from pathlib import Path
 from typing import List, Optional
 
-from workbench_env import _C, _c, die, load_config, ok, step, warn
+from workbench_env import _C, _c, bootstrap_venv, die, load_config, ok, step, warn
 
 IS_WIN = os.name == "nt"
 
@@ -194,6 +194,7 @@ def pick_game_rom(names: List[str], sizes: dict) -> Optional[str]:
 # =============================================================================
 
 def main() -> int:
+    bootstrap_venv()  # re-exec under the toolkit venv if not already there
     load_config()  # --deploy needs VPINMAME_DIR / PINMAME_DIR from config.env
     ap = argparse.ArgumentParser(
         description="Apply JSON patch specs to a WPC ROM zip and produce a patched zip.")

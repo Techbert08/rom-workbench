@@ -31,6 +31,8 @@ import json
 import sys
 from pathlib import Path
 
+from workbench_env import bootstrap_venv
+
 def _now_iso() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
@@ -302,6 +304,7 @@ def validate(session_dir: Path) -> int:
 
 
 def main(argv=None):
+    bootstrap_venv()  # re-exec under the toolkit venv if not already there
     ap = argparse.ArgumentParser(description="synthetic-record tools")
     sub = ap.add_subparsers(dest="cmd", required=True)
     v = sub.add_parser("validate", help="sanity-check a synthetic session dir")

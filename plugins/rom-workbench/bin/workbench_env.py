@@ -10,12 +10,22 @@ entrypoints would die with "VPINBALL_DIR not set."
 To make the toolkit self-contained, setup also drops those same values into a
 small KEY=VALUE config file, and every entrypoint calls load_config() once at
 startup to recover them. The file lives at a fixed, platform-default location
-(see config_path) regardless of --install-root, so any entrypoint can locate it
-deterministically without needing an environment variable to bootstrap.
+(see config_path) regardless of where the toolchain itself was installed, so any
+entrypoint can locate it deterministically without needing an environment
+variable to bootstrap.
 
 load_config() never clobbers a variable that is already in the environment, so an
 explicit shell export still wins (standard .env-loader convention) and the
 legacy user-scope env vars continue to work unchanged.
+
+The heavy artifacts (Visual Pinball, PinMAME, the cache) and a Python virtual
+environment live under the plugin's persistent data directory, exposed to skill
+invocations as ${CLAUDE_PLUGIN_DATA} and surviving plugin updates. That path is
+not present in the ambient shell environment a tool is launched from, so setup
+records it into the same config file; bootstrap_venv() reads it back and re-execs
+the current process under the venv interpreter (see below) so every tool runs
+with the toolkit's third-party dependency (Pillow) available, on Windows or POSIX
+alike — the only OS-specific bit is Scripts\\python.exe vs bin/python.
 
 Stdlib-only; importable as a sibling module because each entrypoint runs as
 `python <tool>.py`, which puts this directory first on sys.path.
@@ -24,6 +34,7 @@ Stdlib-only; importable as a sibling module because each entrypoint runs as
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import NoReturn
@@ -32,6 +43,15 @@ IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 
 CONFIG_NAME = "config.env"
+
+# The plugin's persistent data dir, recorded into config.env by setup and read
+# back to locate the venv + installed toolchain. Skills substitute the live value
+# into setup's invocation; other tools recover it from the config file.
+PLUGIN_DATA_KEY = "CLAUDE_PLUGIN_DATA"
+
+# Set on the child after bootstrap_venv() re-execs, so the re-run is a no-op and
+# we never loop.
+_VENV_GUARD = "ROM_WORKBENCH_IN_VENV"
 
 
 # =============================================================================
@@ -134,6 +154,83 @@ def load_config() -> None:
         val = val.strip().strip('"').strip("'")
         if key and key not in os.environ:
             os.environ[key] = val
+
+
+def _config_value(key: str) -> "str | None":
+    """Read a single KEY's value straight from the config file.
+
+    Used during bootstrap, before load_config() has populated os.environ — it
+    must not depend on, or mutate, the environment."""
+    try:
+        text = config_path().read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        k, sep, v = line.partition("=")
+        if sep and k.strip() == key:
+            return v.strip().strip('"').strip("'")
+    return None
+
+
+# =============================================================================
+# Virtual environment (lives in the plugin's persistent data dir)
+# =============================================================================
+
+def plugin_data_root() -> "Path | None":
+    """The plugin's persistent data dir (${CLAUDE_PLUGIN_DATA}), or None.
+
+    Prefer the live environment value (present when a skill substituted it into
+    the invocation, e.g. for setup) and fall back to the path setup recorded into
+    config.env (the channel every other tool uses, since the variable is not in
+    the ambient shell environment)."""
+    val = os.environ.get(PLUGIN_DATA_KEY) or _config_value(PLUGIN_DATA_KEY)
+    return Path(val).expanduser() if val else None
+
+
+def venv_dir(data_root: Path) -> Path:
+    return data_root / "venv"
+
+
+def venv_python(data_root: Path) -> Path:
+    """Path to the venv's interpreter — the one OS-specific branch in the venv
+    story. Launching this binary *is* "activating" the venv: it reads the
+    adjacent pyvenv.cfg and points site-packages at the venv, no PATH games."""
+    vd = venv_dir(data_root)
+    return vd / "Scripts" / "python.exe" if IS_WIN else vd / "bin" / "python"
+
+
+def bootstrap_venv() -> None:
+    """Re-exec the current tool under the toolchain venv interpreter, if needed.
+
+    A no-op when (a) we are already running under it (guard set, or sys.executable
+    already is it) or (b) no venv exists yet — so setup, which creates the venv on
+    a bare interpreter, runs unimpeded, and stdlib-only tools still work before any
+    install. Otherwise re-run the same argv under the venv python and propagate its
+    exit code. We use subprocess rather than os.execv because on Windows os.execv
+    only emulates exec (spawn + exit), which lets the launching shell return before
+    the child finishes and interleaves output; waiting on a child is reliable on
+    both platforms."""
+    if os.environ.get(_VENV_GUARD):
+        return
+    root = plugin_data_root()
+    if root is None:
+        return
+    py = venv_python(root)
+    if not py.exists():
+        return
+    try:
+        if py.resolve() == Path(sys.executable).resolve():
+            os.environ[_VENV_GUARD] = "1"
+            return
+    except OSError:
+        pass
+    env = dict(os.environ)
+    env[_VENV_GUARD] = "1"
+    proc = subprocess.run([str(py), *sys.argv], env=env)
+    sys.exit(proc.returncode)
 
 
 # =============================================================================

@@ -22,6 +22,10 @@ import argparse
 import json
 from pathlib import Path
 
+from workbench_env import bootstrap_venv
+
+bootstrap_venv()  # re-exec under the toolkit venv (where Pillow lives) before importing it
+
 try:
     from PIL import Image
 except ImportError as e:

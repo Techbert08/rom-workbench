@@ -25,6 +25,8 @@ WPC ROM layout:
 import sys, re, zipfile, argparse, os
 from pathlib import Path
 
+from workbench_env import bootstrap_venv
+
 SIZE_TO_FIRST_PAGE = {
     128  * 1024: 0x38,
     256  * 1024: 0x34,
@@ -568,6 +570,7 @@ def cmd_strings(rom: bytes, minlen: int = 4, section: str = 'all'):
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 
 def main():
+    bootstrap_venv()  # re-exec under the toolkit venv if not already there
     ap = argparse.ArgumentParser(description='WPC ROM binary explorer')
     ap.add_argument('--rom', default=None, help='ROM .zip or raw binary (default: auto-detect from orig/)')
     sub = ap.add_subparsers(dest='cmd', required=True)

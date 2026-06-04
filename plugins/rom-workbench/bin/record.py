@@ -43,7 +43,9 @@ import sys
 import time
 from pathlib import Path
 
-from workbench_env import _C, _c, die, info, load_config, ok, step, warn
+from typing import Any
+
+from workbench_env import _C, _c, bootstrap_venv, die, info, load_config, ok, step, warn
 
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
@@ -141,10 +143,65 @@ def launch_and_wait(vpx_app: Path, vpx_exe: Path, table: Path,
 
 
 # =============================================================================
+# VPinMAME ROM path (Windows): point the COM server at our staged roms
+# =============================================================================
+
+VPM_GLOBALS = r"Software\Freeware\Visual PinMame\globals"
+
+
+def set_vpm_paths(rom_root: Path) -> "dict[str, str | None]":
+    """Point VPinMAME's registry paths at our sandbox; return the prior values.
+
+    Windows-only. The full VPX build loads ROMs through the VPinMAME COM server,
+    which reads them from HKCU\\...\\globals\\rompath — there is no environment
+    variable for this (unlike replay's libpinmame, which we drive directly via
+    PinmameSetPath). record stages the ROM into <rom_root>\\roms, so we set rompath
+    there (plus nvram/cfg, to keep VPinMAME's writes inside the sandbox) right
+    before launch and restore the prior values afterward — so a recording finds
+    the ROM we just staged regardless of what other VPinMAME installs left in the
+    registry."""
+    import winreg  # Windows-only stdlib module
+    wr: Any = winreg
+    wanted = {
+        "rompath": str(rom_root / "roms"),
+        "nvram_path": str(rom_root / "nvram"),
+        "cfg_path": str(rom_root / "cfg"),
+    }
+    for sub in ("roms", "nvram", "cfg"):
+        (rom_root / sub).mkdir(parents=True, exist_ok=True)
+    prior: dict[str, str | None] = {}
+    with wr.CreateKey(wr.HKEY_CURRENT_USER, VPM_GLOBALS) as key:
+        for name, val in wanted.items():
+            try:
+                prior[name] = wr.QueryValueEx(key, name)[0]
+            except FileNotFoundError:
+                prior[name] = None
+            wr.SetValueEx(key, name, 0, wr.REG_SZ, val)
+    ok(f"VPinMAME rompath -> {wanted['rompath']}")
+    return prior
+
+
+def restore_vpm_paths(prior: "dict[str, str | None]") -> None:
+    """Undo set_vpm_paths(): restore each prior value, deleting ones we created."""
+    import winreg  # Windows-only stdlib module
+    wr: Any = winreg
+    with wr.CreateKey(wr.HKEY_CURRENT_USER, VPM_GLOBALS) as key:
+        for name, val in prior.items():
+            if val is None:
+                try:
+                    wr.DeleteValue(key, name)
+                except FileNotFoundError:
+                    pass
+            else:
+                wr.SetValueEx(key, name, 0, wr.REG_SZ, val)
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
 def main() -> int:
+    bootstrap_venv()  # re-exec under the toolkit venv if not already there
     load_config()  # recover VPINBALL_DIR / PINMAME_DIR / VPINMAME_DIR from config.env
     ap = argparse.ArgumentParser(
         description="Record a WPC gameplay session in Visual Pinball + VPinMAME.")
@@ -252,6 +309,8 @@ def main() -> int:
     # points. Export it (and, on macOS, clear VPX's texture cache, which can
     # deadlock at 50% on a repeat load of the same table).
     os.environ["VPINMAME_SWITCHLOG"] = str(switch_log)
+    # Windows: aim VPinMAME's COM rompath at our staged-ROM dir for this launch.
+    vpm_prior = set_vpm_paths(rom_root) if IS_WIN else None
     if IS_MAC:
         cache = Path.home() / ".vpinball" / "Cache" / table.stem
         if cache.is_dir():
@@ -261,6 +320,8 @@ def main() -> int:
         timed_out = launch_and_wait(vpx_app, vpx_exe, table, vpinball, args.max_sec)
     finally:
         os.environ.pop("VPINMAME_SWITCHLOG", None)
+        if vpm_prior is not None:
+            restore_vpm_paths(vpm_prior)
 
     # --- Fold the captured switch stream into session.jsonl ------------------
     sw_count = 0

@@ -30,7 +30,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from workbench_env import load_config
+from workbench_env import bootstrap_venv, load_config
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,6 +64,7 @@ def env_var(name: str) -> str:
 
 
 def main() -> int:
+    bootstrap_venv()  # re-exec under the toolkit venv if not already there
     load_config()  # recover PINMAME_DIR from config.env if not already in the env
     args = parse_args()
 

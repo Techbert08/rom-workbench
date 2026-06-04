@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
 """Cross-platform one-time installer for the rom-workbench (record) toolchain.
 
-A stdlib-only script that installs everything under a per-user data directory:
+A stdlib-only script that installs everything under the plugin's persistent data
+directory (${CLAUDE_PLUGIN_DATA}, ~/.claude/plugins/data/<id>/), which survives
+plugin updates — the setup skill substitutes the live path into --plugin-data.
+With no plugin context it falls back to a per-user data directory:
 
     macOS    ~/Library/Application Support/rom-workbench/
     Windows  %LOCALAPPDATA%\\rom-workbench\\
     Linux    $XDG_DATA_HOME (or ~/.local/share)/rom-workbench/
 
-with vpinball/, pinmame/ and (Windows) vpinmame/ underneath, plus a cache/.
+with vpinball/, pinmame/, (Windows) vpinmame/ and a Python venv/ underneath, plus
+a cache/.
 
 Requires Python 3.9+ and pip on PATH; run it directly:
 
     python3 setup-pinball.py        # (or `python setup-pinball.py` on Windows)
 
 Steps:
-  1. Verify pip for this interpreter and install Pillow (the only third-party
-     dependency; used by the DMD-render tools). Every other tool is stdlib-only
-     and runs as `python <tool>.py`.
+  1. Create a Python virtual environment under the data dir and install Pillow
+     into it (the only third-party dependency; used by the DMD-render tools).
+     Every tool re-execs itself into this venv via workbench_env.bootstrap_venv(),
+     so Pillow resolves no matter which `python3` launched it.
   2. Download + install Visual Pinball X.
   3. Deploy the prebuilt patched libpinmame from lib/ into PINMAME_DIR (replay
      loads it via ctypes; it's self-contained, so nothing to download).
@@ -25,7 +30,9 @@ Steps:
               register it with regsvr32.
   4. Persist VPINBALL_DIR / PINMAME_DIR / (Windows) VPINMAME_DIR as user env vars
      *and* into a config.env the other entrypoints load (so a fresh shell that
-     never re-read the user env still finds the toolchain). See workbench_env.py.
+     never re-read the user env still finds the toolchain). The data-dir path
+     itself is recorded there too, so tools can locate the venv. See
+     workbench_env.py.
 
 Re-running is idempotent; pass --force to re-download / rebuild.
 """
@@ -46,8 +53,8 @@ from pathlib import Path
 from typing import Any
 
 from workbench_env import (
-    _C, _c, default_data_root, die, info, is_admin, ok, run_elevated, step,
-    warn, write_config,
+    _C, _c, PLUGIN_DATA_KEY, default_data_root, die, info, is_admin, ok,
+    run_elevated, step, venv_python, warn, write_config,
 )
 
 IS_WIN = os.name == "nt"
@@ -93,9 +100,16 @@ def run(cmd, **kw):
 # Paths / env
 # =============================================================================
 
-def data_root(override: "str | None") -> Path:
+def data_root(override: "str | None", plugin_data: "str | None") -> Path:
+    """Where the toolchain (and venv) get installed.
+
+    Prefer an explicit --install-root, then the plugin's persistent data dir
+    (${CLAUDE_PLUGIN_DATA}, passed via --plugin-data or the environment), then a
+    per-user app-data fallback for runs with no plugin context."""
     if override:
         return Path(override).expanduser().resolve()
+    if plugin_data:
+        return Path(plugin_data).expanduser().resolve()
     return default_data_root()
 
 
@@ -254,13 +268,18 @@ def extract_zip(zip_path: Path, dest: Path, strip: bool = False) -> None:
 
 
 # =============================================================================
-# Step 1: Python + pip + Pillow
+# Step 1: Python virtual environment + Pillow
 # =============================================================================
 
-def ensure_python_deps() -> None:
-    """Verify pip is available for this interpreter, then install the only
-    third-party dependency the toolkit needs: Pillow (used by the DMD-render
-    tools). Every other tool is stdlib-only and runs as `python <tool>.py`."""
+def ensure_venv(root: Path, force: bool) -> Path:
+    """Create the toolkit venv under the data dir and install Pillow into it.
+
+    Every entrypoint re-execs itself into this venv (workbench_env.bootstrap_venv),
+    so Pillow — the only third-party dependency, used by the DMD-render tools —
+    resolves regardless of which `python3` the skill invoked. Returns the venv's
+    interpreter path. We build the venv with the interpreter running this script;
+    pip then runs as `<venv-python> -m pip`, targeting the venv, not that base
+    interpreter."""
     step("Checking Python + pip")
     info(f"Python {platform.python_version()} at {sys.executable}")
     pip_check = subprocess.run([sys.executable, "-m", "pip", "--version"],
@@ -270,12 +289,31 @@ def ensure_python_deps() -> None:
             "(e.g. `python -m ensurepip --upgrade`) so it is importable, then re-run.")
     ok(pip_check.stdout.strip() or "pip available")
 
-    step("Installing Pillow (DMD-render dependency)")
+    vdir = root / "venv"
+    vpy = venv_python(root)
+    step(f"Python virtual environment at {vdir}")
+    if vpy.exists() and not force:
+        ok("venv present; reusing.")
+    else:
+        if force and vdir.exists():
+            shutil.rmtree(vdir, ignore_errors=True)
+        try:
+            run([sys.executable, "-m", "venv", str(vdir)])
+        except subprocess.CalledProcessError as e:
+            die(f"Failed to create venv at {vdir}: {e}")
+        if not vpy.exists():
+            die(f"venv creation did not produce an interpreter at {vpy}.")
+        ok(f"venv created ({vpy}).")
+
+    step("Installing Pillow into the venv (DMD-render dependency)")
     try:
-        run([sys.executable, "-m", "pip", "install", "--upgrade", "pillow"])
+        run([str(vpy), "-m", "pip", "install", "--upgrade", "pip"],
+            stdout=subprocess.DEVNULL)
+        run([str(vpy), "-m", "pip", "install", "--upgrade", "pillow"])
         ok("Pillow installed.")
     except subprocess.CalledProcessError as e:
-        die(f"Failed to install Pillow via pip: {e}")
+        die(f"Failed to install Pillow into the venv: {e}")
+    return vpy
 
 
 # =============================================================================
@@ -646,10 +684,50 @@ def _vpm_registered() -> bool:
         return False
 
 
+def _vpm_registered_dll() -> "Path | None":
+    """The DLL currently backing VPinMAME.Controller (its InprocServer32), or None.
+
+    VPX loads whichever DLL this resolves to; if it isn't our patched build, the
+    switch recorder record.py relies on isn't present. Both registry views are
+    checked because a 64-bit COM server can land under CLSID or WOW6432Node."""
+    try:
+        import winreg  # Windows-only stdlib module
+        wr: Any = winreg
+        with wr.OpenKey(wr.HKEY_CLASSES_ROOT, r"VPinMAME.Controller\CLSID") as k:
+            clsid, _ = wr.QueryValueEx(k, None)
+    except OSError:
+        return None
+    for view in (wr.KEY_WOW64_64KEY, wr.KEY_WOW64_32KEY):
+        for hive in (wr.HKEY_LOCAL_MACHINE, wr.HKEY_CURRENT_USER):
+            try:
+                with wr.OpenKey(hive, rf"SOFTWARE\Classes\CLSID\{clsid}\InprocServer32",
+                                0, wr.KEY_READ | view) as k:
+                    val, _ = wr.QueryValueEx(k, None)
+                    return Path(val)
+            except OSError:
+                continue
+    return None
+
+
+def _same_path(a: Path, b: Path) -> bool:
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return str(a).lower() == str(b).lower()
+
+
 def _regsvr32(dll: Path, force: bool) -> None:
-    if _vpm_registered() and not force:
-        ok("VPinMAME.Controller already COM-registered.")
+    # Ensure *our* patched DLL owns VPinMAME.Controller. Skip only when it already
+    # does (idempotent, no redundant UAC); re-register when nothing is registered
+    # or — the common breakage — a different/stale VPinMAME install holds the COM
+    # server, in which case VPX would otherwise load that one instead of ours.
+    current = _vpm_registered_dll()
+    if current and not force and _same_path(current, dll):
+        ok(f"VPinMAME.Controller already registered to our DLL ({dll}).")
         return
+    if current and not _same_path(current, dll):
+        warn(f"VPinMAME.Controller is registered to {current}")
+        warn("— re-registering the rom-workbench patched DLL so VPX loads the switch recorder.")
     step("Registering VPinMAME.Controller via regsvr32")
     rs = str(Path(os.environ["WINDIR"]) / "system32" / "regsvr32.exe")
 
@@ -671,9 +749,12 @@ def _regsvr32(dll: Path, force: bool) -> None:
 
     if rc != 0:
         die(f"regsvr32 failed (exit {rc}) on {dll}.")
-    if not _vpm_registered():
+    now = _vpm_registered_dll()
+    if now is None:
         die("regsvr32 reported success but HKCR\\VPinMAME.Controller is missing.")
-    ok("VPinMAME.Controller registered.")
+    if not _same_path(now, dll):
+        warn(f"VPinMAME.Controller registered, but to {now} rather than {dll}.")
+    ok(f"VPinMAME.Controller registered to {now}.")
 
 
 # =============================================================================
@@ -686,7 +767,11 @@ def main() -> int:
     ap.add_argument("--force", action="store_true",
                     help="Re-download / rebuild everything even if already present.")
     ap.add_argument("--install-root", default=None,
-                    help="Override the per-user install root (default: platform app-data dir).")
+                    help="Override the install root (default: the plugin data dir, "
+                         "else platform app-data dir).")
+    ap.add_argument("--plugin-data", default=os.environ.get(PLUGIN_DATA_KEY),
+                    help="The plugin's persistent data dir (${CLAUDE_PLUGIN_DATA}); "
+                         "the setup skill passes this. Defaults to the env var.")
     ap.add_argument("--pinmame-src", default=None,
                     help="macOS source-build fallback: path to a pinmame clone "
                          "(default: ../pinmame next to the repo root).")
@@ -695,16 +780,18 @@ def main() -> int:
     if not (IS_WIN or IS_MAC or IS_LINUX):
         die(f"Unsupported platform: {sys.platform}")
 
-    root = data_root(args.install_root)
+    root = data_root(args.install_root, args.plugin_data)
     root.mkdir(parents=True, exist_ok=True)
     pinmame_src = Path(args.pinmame_src).expanduser().resolve() if args.pinmame_src \
         else (REPO_ROOT.parent / "pinmame")
 
-    ensure_python_deps()
+    ensure_venv(root, args.force)
 
     # Record every persisted var so we can also drop it into the config file that
-    # the other entrypoints load — see persist_config() below.
-    config: dict[str, str] = {}
+    # the other entrypoints load — see persist_config() below. The data-dir path
+    # goes in too (config-only, not a user env var — Claude Code owns
+    # CLAUDE_PLUGIN_DATA): it's how tools locate the venv to re-exec into.
+    config: dict[str, str] = {PLUGIN_DATA_KEY: str(root)}
 
     def persist(name: str, value: str) -> None:
         set_user_env(name, value)
@@ -739,7 +826,7 @@ def main() -> int:
     if IS_WIN:
         print(f"  PINMAME_DIR   = {root / 'pinmame'}")
         print(f"  VPINMAME_DIR  = {root / 'vpinmame'}")
-    print(f"  python        = {sys.executable}")
+    print(f"  venv python   = {venv_python(root)}")
     if cfg_path:
         print(f"  config        = {cfg_path}")
     print()

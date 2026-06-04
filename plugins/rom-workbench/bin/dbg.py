@@ -40,6 +40,8 @@ import socket
 import sys
 from pathlib import Path
 
+from workbench_env import bootstrap_venv
+
 
 def find_port(explicit: int | None) -> int:
     if explicit:
@@ -56,6 +58,7 @@ def find_port(explicit: int | None) -> int:
 
 
 def main() -> int:
+    bootstrap_venv()  # re-exec under the toolkit venv if not already there
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("--port", type=int, default=None)
     ap.add_argument("--host", default="127.0.0.1")
