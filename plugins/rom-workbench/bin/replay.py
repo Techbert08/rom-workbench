@@ -92,6 +92,13 @@ def parse_args() -> argparse.Namespace:
                          "Default 1.0.")
     ap.add_argument("--overwrite", action="store_true",
                     help="Allow --out-dir to exist.")
+    ap.add_argument("--platform", choices=("wpc", "whitestar"), default="wpc",
+                    help="ROM-bank resolution for the dbg trace. Default wpc. Use "
+                         "'whitestar' for Sega/Stern (e.g. LOTR) so banked PCs in "
+                         "dbg/interactive resolve to the right page.")
+    ap.add_argument("--bank-shadow", default=None,
+                    help="Whitestar only: game-RAM address shadowing the bank "
+                         "register (default 0x0243, verified for LOTR).")
     return ap.parse_args()
 
 
@@ -187,6 +194,10 @@ def main() -> int:
         "--max-sec",     f"{args.max_sec:.1f}",
         "--tail-sec",    f"{args.tail_sec:.1f}",
     ]
+    if args.platform != "wpc":
+        cmd += ["--platform", args.platform]
+    if args.bank_shadow:
+        cmd += ["--bank-shadow", args.bank_shadow]
     if "dbg" in traces:
         if args.break_pc:      cmd += ["--break-pc", args.break_pc]
         if args.watch_r:       cmd += ["--watch-r",  args.watch_r]

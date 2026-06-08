@@ -79,6 +79,42 @@ Every `dbg` hit reports `bank` (read from `(DP<<8)+0x11`) and `loc`
 (`$<PC>@p<bank>` for banked PCs, `$<PC>` for system). Paste `loc` straight into
 `rom.py dis` / `rom.py xref`.
 
+## Sega/Stern Whitestar ROMs (e.g. Lord of the Rings) — `--platform whitestar`
+
+Most of this toolkit was built for **Williams WPC**, but the CPU is the same
+**68B09E**, so the disassembler and the live debugger (breakpoints / watchpoints
+/ single-step) work on **Sega/Stern Whitestar** games too. The differences that
+bite — and how the tools now handle them:
+
+- **Multi-file ROM zip.** A Whitestar set has the 128 KB main CPU ROM
+  (`*cpua*.a00`), a 512 KB display ROM (`*dsp*.a00`), 1 MB BSMT sound ROMs, and a
+  2 MB `bios.u8`. `rom.py` now scores by name **and** by a valid 6809 reset
+  vector, so it auto-selects the CPU ROM. (`rom.py info`'s *checksum/version*
+  line is WPC-specific and meaningless here — ignore it; Whitestar uses a
+  different checksum.)
+- **Bank resolution.** WPC's system shadow `(DP<<8)+0x11` does not exist on
+  Whitestar — the bank register (`$3200`, write-only) is mirrored by a
+  *game-specific* RAM byte (**`$0243`** on LOTR). Pass **`--platform whitestar`**
+  (optionally `--bank-shadow 0xNNNN` for other games) to `replay.py` so `bank`/
+  `loc` resolve to the correct rom.py page (`page = first_page + (shadow &
+  (npages-1))`). Without it the printed `bank=` is garbage on Whitestar.
+- **RAM reads need the handler-fallback DLL (patch `0004`).** Whitestar maps its
+  whole game RAM `$0000-$1FFF` through the `ram_r` *function handler* (not a
+  direct bank), so the stock `PinmameReadMainCPUByte` (which used
+  `memory_get_read_ptr`) returned **0 for all RAM** — `dbg.py mem`, `--dbg-mem`,
+  and the `$0243` bank-shadow read were silently zero. `pinmame-patches/0004`
+  adds a `cpunum_read_byte` fallback so RAM/IO read correctly. If `mem 0x0e00`
+  (the live task table) reads all-zero, your deployed `libpinmame.dll` predates
+  this fix — rebuild + redeploy. (WPC is unaffected; its RAM is a direct bank.)
+- **I/O map (from PinMAME `se.c`, confirmed live):** `$3000`=dedicated switches
+  (active-low: D0 L-flip, D1 L-EOS, D2 R-flip, D3 R-EOS, D7 Test); `$3100`=DIP;
+  `$3200`=bank reg; `$3300`/`$3400`=switch column-select / row-read;
+  `$3500`/`$3600`=DMD; `$3800`=sound. Lamps `$2008-$200A`, solenoids `$2000-$2003`.
+- **Switch matrix** is debounced into **zero-page**: state `$9F+col`, just-pressed
+  edges `$A7+col` (so switch N → col=(N-1)/8, bit=(N-1)%8). DMD **text lives in
+  the display ROM**, not the CPU ROM — the CPU triggers messages by effect ID.
+- **IRQ vector is just `RTI`**; all periodic work is in the **FIRQ**.
+
 ## Live CPU debugger — two ways to drive it
 
 ### A. Event-driven (run once, read the JSONL)

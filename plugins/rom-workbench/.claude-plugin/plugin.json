@@ -2,7 +2,7 @@
   "name": "rom-workbench",
   "displayName": "ROM Workbench",
   "description": "WPC pinball ROM reverse-engineering and modding toolkit — static analysis, live CPU debugger, session capture/replay, patch building, and toolchain setup.",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "author": {
     "name": "Techbert08"
   },

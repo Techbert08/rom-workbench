@@ -1,0 +1,51 @@
+From 7e7e4d46dab0a3a699ab24f494c3c68bf5095385 Mon Sep 17 00:00:00 2001
+From: rom-workbench <noreply@anthropic.com>
+Date: Sun, 7 Jun 2026 19:27:02 -0400
+Subject: [PATCH] libpinmame: fix PinmameReadMainCPUByte for handler-mapped RAM
+ (Whitestar)
+
+memory_get_read_ptr() only resolves directly-mapped RAM/ROM banks and
+returns NULL for addresses served by a function handler. Sega/Stern
+Whitestar (se.c) maps its entire game RAM 0x0000-0x1FFF through the ram_r
+handler, so PinmameReadMainCPUByte returned 0 for all of it -- breaking
+live RAM inspection / RAM diffs in the debugger on that platform (WPC was
+unaffected since its RAM is a direct bank). Fall back to cpunum_read_byte,
+which routes through the CPU's full address map.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ src/libpinmame/libpinmame.cpp | 15 ++++++++++++---
+ 1 file changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/src/libpinmame/libpinmame.cpp b/src/libpinmame/libpinmame.cpp
+index 66ae615a..d4af514a 100644
+--- a/src/libpinmame/libpinmame.cpp
++++ b/src/libpinmame/libpinmame.cpp
+@@ -1523,12 +1523,21 @@ PINMAMEAPI int PinmameReadMainCPUByte(const uint32_t address, uint8_t* const p_v
+ 	}
+ 
+ 	uint8_t* p_memory = static_cast<uint8_t*>(memory_get_read_ptr(0, address));
+-	if (p_memory == nullptr)
++	if (p_memory != nullptr)
+ 	{
+-		return 0;
++		*p_value = *p_memory;
++		return 1;
+ 	}
+ 
+-	*p_value = *p_memory;
++	// Some drivers serve RAM/IO through function handlers rather than a direct
++	// memory bank, so memory_get_read_ptr() returns NULL for those addresses.
++	// Notably Sega/Stern Whitestar (se.c) maps 0x0000-0x1FFF via the ram_r
++	// handler (which reads memory_region(SE_CPUREGION)), so its entire game RAM
++	// was unreadable here. Fall back to the CPU's memory handler, which routes
++	// the access through the full address map and returns the live value.
++	// (Caveat: reading mapped I/O this way can have read side effects; the
++	// debugger uses this to inspect RAM, which is side-effect free.)
++	*p_value = cpunum_read_byte(0, address);
+ 	return 1;
+ }
+ 
+-- 
+2.52.0.windows.1
+

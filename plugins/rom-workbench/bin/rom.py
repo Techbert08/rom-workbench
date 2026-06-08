@@ -48,14 +48,26 @@ def load_rom(path: str) -> bytes:
                 n = e.filename.lower()
                 s = 0
                 if '_g' in n: s += 10
+                if 'cpu' in n: s += 12              # Sega/Stern (Whitestar) main CPU ROM, e.g. lotrcpua.a00
                 if re.match(r'^[a-z]{2,4}s\d', n): s -= 10
-                if any(x in n for x in ('sound', 'snd', 'dcs')): s -= 5
+                if any(x in n for x in ('sound', 'snd', 'dcs', 'voic', 'speech')): s -= 8
+                if any(x in n for x in ('dsp', 'disp', 'dmd')): s -= 8   # display/DMD ROM
+                if 'bios' in n: s -= 20            # Whitestar BIOS image
                 return s
-            entries.sort(key=lambda e: -score(e))
             valid = {128*1024, 256*1024, 512*1024, 1024*1024}
-            for e in entries:
-                if e.file_size in valid:
-                    return zf.read(e.filename)
+            cands = sorted((e for e in entries if e.file_size in valid),
+                           key=lambda e: -score(e))
+            # Prefer (in score order) an entry whose 6809 reset vector at the very
+            # top of its fixed region points into $8000-$FFFF — the structural
+            # fingerprint of a real game CPU ROM (vs. a sound/display data ROM).
+            # This is what lets a multi-file Whitestar zip resolve to lotrcpua.a00
+            # instead of a 1 MB BSMT sound ROM.
+            for e in cands:
+                data = zf.read(e.filename)
+                if (data[-2] << 8 | data[-1]) >= 0x8000:
+                    return data
+            if cands:
+                return zf.read(cands[0].filename)
             raise ValueError("No valid game ROM found in zip")
     return p.read_bytes()
 

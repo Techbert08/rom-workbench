@@ -425,6 +425,15 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--heartbeat-sec", type=float, default=5.0,
                     help="Emit a one-line progress update every N sim-seconds. "
                          "Set to 0 to disable. Ignored under --quiet.")
+    ap.add_argument("--platform", choices=("wpc", "whitestar"), default="wpc",
+                    help="ROM-bank resolution scheme for the dbg trace. "
+                         "wpc (default): live bank shadowed at (DP<<8)+0x11, value is "
+                         "the page. whitestar (Sega/Stern): bank shadowed in game RAM "
+                         "(see --bank-shadow); page = first_page + (shadow & (npages-1)).")
+    ap.add_argument("--bank-shadow", type=lambda x: int(x, 0), default=0x0243,
+                    help="Whitestar only: game-RAM address mirroring the ROM bank "
+                         "register ($3200). Default 0x0243 (verified for LOTR). "
+                         "Ignored under --platform wpc.")
     args = ap.parse_args(argv)
 
     traces = set(t.strip() for t in args.trace.split(",") if t.strip())
@@ -784,12 +793,15 @@ def main(argv: list[str]) -> int:
         for a in dbg_watch_w_addrs:
             lib.PinmameDebugAddWatchpoint(ctypes.c_uint32(a), 0, 1)
 
-        # WPC keeps a RAM shadow of the live ROM-bank register at
-        # (DP<<8)+0x11 (the system mirrors every WPC_ROM_BANK write there;
-        # visible in the decompile as *(in_DP*0x100+0x11)). Reading it at a
-        # frozen breakpoint tells us which page is mapped into $4000-$7FFF,
-        # which is the ONLY way to resolve a banked PC/pointer to a file
-        # offset — the register snapshot alone is ambiguous across pages.
+        # To resolve a banked PC/pointer to a file offset we need the page
+        # mapped into $4000-$7FFF — the register snapshot alone is ambiguous.
+        # WPC keeps a RAM shadow of the live ROM-bank register at (DP<<8)+0x11
+        # (the system mirrors every WPC_ROM_BANK write there; visible in the
+        # decompile as *(in_DP*0x100+0x11)), and that byte IS the page number.
+        # Sega/Stern Whitestar has no such system shadow: the bank register
+        # ($3200) is write-only, so each game keeps its own RAM shadow (LOTR:
+        # $0243). There the shadow holds the bank index and the rom.py page is
+        # first_page + (shadow & (npages-1)).  Select via --platform.
         _have_membyte = hasattr(lib, "PinmameReadMainCPUByte")
 
         def _read_byte(addr: int):
@@ -799,6 +811,38 @@ def main(argv: list[str]) -> int:
             lib.PinmameReadMainCPUByte(ctypes.c_uint32(addr & 0xFFFF),
                                        ctypes.byref(out))
             return int(out.value)
+
+        # Lazily-cached ROM geometry for whitestar page mapping (first page +
+        # number of 16 KB pages), derived from the same loader rom.py uses.
+        _bank_rom = {"first": None, "npages": None, "loaded": False}
+
+        def _bank_rom_info():
+            if not _bank_rom["loaded"]:
+                _bank_rom["loaded"] = True
+                try:
+                    import importlib.util
+                    rp = Path(__file__).resolve().parent / "rom.py"
+                    spec = importlib.util.spec_from_file_location("wpc_rom", rp)
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    img = mod.load_rom(str(args.rom_dir / f"{args.rom}.zip"))
+                    _bank_rom["first"] = mod.SIZE_TO_FIRST_PAGE[len(img)]
+                    _bank_rom["npages"] = len(img) // 0x4000
+                except Exception as e:  # pragma: no cover - best effort
+                    log(f"[dbg] whitestar bank geometry unavailable: {e}")
+            return _bank_rom
+
+        def _resolve_bank(dp: int):
+            """Page (in rom.py numbering) mapped at $4000-$7FFF, or None."""
+            if args.platform == "whitestar":
+                raw = _read_byte(args.bank_shadow)
+                if raw is None:
+                    return None
+                info = _bank_rom_info()
+                if info["first"] is not None and info["npages"]:
+                    return info["first"] + (raw & (info["npages"] - 1))
+                return raw
+            return _read_byte((dp << 8) + 0x11)
 
         def _loc(pc: int, bank) -> str:
             # Canonical address form accepted by rom.py.
@@ -850,7 +894,7 @@ def main(argv: list[str]) -> int:
                 # Resolve the mapped ROM page so a banked PC becomes a
                 # file-locatable address (feed `loc` straight to rom.py).
                 pc   = int(ev.hit_pc)
-                bank = _read_byte((int(ev.regs.dp) << 8) + 0x11)
+                bank = _resolve_bank(int(ev.regs.dp))
                 if bank is not None:
                     rec["bank"] = f"0x{bank:02X}"
                 rec["loc"] = _loc(pc, bank)
@@ -959,7 +1003,7 @@ def main(argv: list[str]) -> int:
 
             def cur():
                 pc   = int(ev.regs.pc)
-                bank = _read_byte((int(ev.regs.dp) << 8) + 0x11)
+                bank = _resolve_bank(int(ev.regs.dp))
                 return pc, bank
 
             def fmt_regs() -> str:
