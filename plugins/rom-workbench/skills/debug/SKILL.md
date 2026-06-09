@@ -94,10 +94,14 @@ bite — and how the tools now handle them:
   different checksum.)
 - **Bank resolution.** WPC's system shadow `(DP<<8)+0x11` does not exist on
   Whitestar — the bank register (`$3200`, write-only) is mirrored by a
-  *game-specific* RAM byte (**`$0243`** on LOTR). Pass **`--platform whitestar`**
-  (optionally `--bank-shadow 0xNNNN` for other games) to `replay.py` so `bank`/
-  `loc` resolve to the correct rom.py page (`page = first_page + (shadow &
-  (npages-1))`). Without it the printed `bank=` is garbage on Whitestar.
+  *game-specific* RAM byte (**`$0243`** on LOTR). `replay.py` needs
+  **`--platform whitestar`** (optionally `--bank-shadow 0xNNNN` for other games)
+  so `bank`/`loc` resolve to the correct rom.py page (`page = first_page +
+  (shadow & (npages-1))`). Without it the printed `bank=` is garbage on Whitestar.
+  **You don't pass these by hand if the project has a `game.json`** — `replay.py`
+  reads `platform`/`bank_shadow` from it (walking up from the CWD) and defaults
+  the flags; an explicit flag still overrides. The `setup` skill writes that
+  manifest during per-game project setup.
 - **RAM reads need the handler-fallback DLL (patch `0004`).** Whitestar maps its
   whole game RAM `$0000-$1FFF` through the `ram_r` *function handler* (not a
   direct bank), so the stock `PinmameReadMainCPUByte` (which used
@@ -284,19 +288,19 @@ sources, in order of authority for the switch you care about:
    models (start, trough, slings, jets, lanes, coin door): the game's
    `src/wpc/*.c` in the PinMAME tree (for Congo, `prelim/congo.c`). It does
    **not** include most playfield targets — the prelim sim doesn't model them.
-2. **The table VBScript** (`orig/<table>.vbs`) — maps physical playfield objects
-   to the switch numbers the ROM reads (`Controller.Switch(n)` /
-   `vpmTimer.PulseSw n`), so it covers the targets the driver omits. Extract it
-   from the table once:
+2. **The table VBScript** (`tables/<table>.vbs`, extracted once by the `setup`
+   skill's per-game project setup) — maps physical playfield objects to the switch
+   numbers the ROM reads (`Controller.Switch(n)` / `vpmTimer.PulseSw n`), so it
+   covers the targets the driver omits. If it isn't extracted yet:
 
    ```bash
-   # macOS / Linux
-   VPinballX_GL --extractvbs orig/<table>.vpx      # writes orig/<table>.vbs
-   # Windows
-   VPinballX.exe -ExtractVBS orig\<table>.vpx
+   VPinballX_GL --extractvbs tables/<table>.vpx     # macOS/Linux -> tables/<table>.vbs
+   VPinballX.exe -ExtractVBS tables\<table>.vpx      # Windows
    ```
 
-   Then grep the `.vbs` for `Controller.Switch(` / `PulseSw` to read the wiring.
+   Then grep the `.vbs` for `Controller.Switch(` / `PulseSw` / `SolCallback(` to
+   read the wiring. Pre-pinned identities live in the `./names/<rom>.json` and
+   `./lamps/<rom>.json` atlases (seeded by `setup`) — check there first.
 3. **Empirical, from a real recording** — the definitive answer to "which switch
    *does* X". Replay a session that exercised the feature with `--watch-w` on the
    RAM the feature touches, and read the switch edge that immediately precedes

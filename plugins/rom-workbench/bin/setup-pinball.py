@@ -305,14 +305,16 @@ def ensure_venv(root: Path, force: bool) -> Path:
             die(f"venv creation did not produce an interpreter at {vpy}.")
         ok(f"venv created ({vpy}).")
 
-    step("Installing Pillow into the venv (DMD-render dependency)")
+    step("Installing Python deps into the venv (Pillow for DMD render, PyMuPDF for manual matrices)")
     try:
         run([str(vpy), "-m", "pip", "install", "--upgrade", "pip"],
             stdout=subprocess.DEVNULL)
-        run([str(vpy), "-m", "pip", "install", "--upgrade", "pillow"])
-        ok("Pillow installed.")
+        # pillow: DMD-render tools. pymupdf: rasterize operator-manual PDF pages
+        # (switch/lamp matrices) to PNG when building the per-game atlases.
+        run([str(vpy), "-m", "pip", "install", "--upgrade", "pillow", "pymupdf"])
+        ok("Pillow + PyMuPDF installed.")
     except subprocess.CalledProcessError as e:
-        die(f"Failed to install Pillow into the venv: {e}")
+        die(f"Failed to install Python deps into the venv: {e}")
     return vpy
 
 

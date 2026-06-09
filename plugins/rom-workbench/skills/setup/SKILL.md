@@ -91,7 +91,7 @@ root with `--install-root`. Idempotent; pass `--force` to re-download/rebuild
 (also recreates the venv).
 
 Steps:
-1. **Create the venv and install Pillow** — confirm `pip` is available for the launching interpreter, create a virtual environment at `<root>/venv`, then `pip install pillow` **into that venv** (the only third-party dependency, used by the DMD-render tools). Every tool re-execs itself into this venv on startup (`workbench_env.bootstrap_venv()`), so Pillow resolves no matter which `python3` launched it — on Windows or POSIX.
+1. **Create the venv and install Pillow + PyMuPDF** — confirm `pip` is available for the launching interpreter, create a virtual environment at `<root>/venv`, then `pip install pillow pymupdf` **into that venv** (Pillow for the DMD-render tools; PyMuPDF to rasterize operator-manual matrix pages when building per-game atlases). Every tool re-execs itself into this venv on startup (`workbench_env.bootstrap_venv()`), so they resolve no matter which `python3` launched it — on Windows or POSIX.
 2. **Visual Pinball X** — download + install into `<root>/vpinball/` (skips gracefully if the pinned release has no asset for this OS/arch; replay doesn't need VPX).
 3. **Patched libpinmame** — deploy the prebuilt patched library from `bin/` into `<root>/pinmame/` (replay loads it via ctypes; it's self-contained, so nothing is downloaded).
    - **macOS** — install `libpinmame.dylib` (prefer the arch-matched prebuilt in `bin/`; otherwise build from `--pinmame-src`, default `../pinmame` beside the repo). Also deploy it into the VPX bundle, ad-hoc re-sign, and run a Gatekeeper trial-launch.
@@ -123,6 +123,146 @@ recording always finds the ROM no matter what other VPinMAME install last touche
 the registry. Drop a game's files into `./orig/` and `./tables/` and run
 `record.py --rom <name>`; nothing to register.
 
+## Per-game project setup (the atlas + manifest)
+
+Beyond dropping files in by convention, each mod project benefits from a one-time
+**project setup** that the later skills (record / synthetic-record / debug) then
+rely on, instead of each re-deriving the same facts. It produces three things in
+the working directory:
+
+| Artifact | File | What it is |
+|---|---|---|
+| **Game manifest** | `./game.json` | Platform + the flags the tools need (schema: `schemas/game.schema.json`). |
+| **Switch atlas** | `./names/<rom>.json` | Switch # → name (schema: `schemas/names.schema.json`). |
+| **Lamp atlas** | `./lamps/<rom>.json` | Lamp # → name/descriptor (schema: `schemas/lamps.schema.json`). |
+
+Two of the steps are mechanical; the atlas-building is **judgment work you (Claude)
+do** — VBScripts are author-specific and there is no reliable mechanical extractor,
+so don't try to write one. Read the table's VBS and the manual and record what you
+find.
+
+### Step 1 — Stage the table + extract the VBS (mechanical)
+
+If the table arrived zipped, unzip it into `./tables/`. Then extract its VBScript
+once — it's the source of truth for switch/solenoid/lamp wiring, and extracting it
+here means no other skill has to:
+
+```powershell
+# Windows
+& "$env:VPINBALL_DIR\VPinballX.exe" -ExtractVBS "tables\<table>.vpx"   # writes tables\<table>.vbs
+```
+```bash
+# macOS / Linux
+"$VPINBALL_DIR/VPinballX_GL" --extractvbs tables/<table>.vpx           # writes tables/<table>.vbs
+```
+
+### Step 2 — Write `./game.json` (mechanical-ish; captures the platform flags)
+
+This is the mechanism that makes the disassembler/simulator "do the right thing"
+without you remembering per-call flags. The **platform** (`wpc` vs `whitestar`)
+and, for Whitestar, the **`bank_shadow`** RAM address determine how banked ROM
+addresses resolve. Record them once:
+
+```json
+{ "rom": "lotr", "platform": "whitestar", "bank_shadow": "0x0243",
+  "title": "The Lord of the Rings", "manufacturer": "Stern", "year": 2003,
+  "table": "tables/<table>.vpx", "vbs": "tables/<table>.vbs",
+  "ipdb": 4858, "manual_url": "https://archive.org/.../<game>_djvu.txt" }
+```
+
+`replay.py` reads `platform`/`bank_shadow` from `game.json` (walking up from the
+CWD, so it works from `sessions/` too) and defaults `--platform`/`--bank-shadow`
+to them — an explicit CLI flag still overrides. `rom.py` already auto-detects
+Whitestar ROM geometry from file sizes, so the disassembler needs no flag.
+
+**Telling the two platforms apart:** WPC = Williams/Bally, ~1990–1999, ROM zip is
+a single `*.bin`-style dump. Whitestar = Sega/Stern, ~1995–2006, the ROM zip holds
+multiple files including a `*cpu*.aNN` main image (e.g. `lotrcpua.a00`) and often a
+`*bios*`/`s2*` sound set. The `bank_shadow` for Whitestar (the game-RAM address
+mirroring the `$3200` bank register) is **game-specific**; `0x0243` is verified for
+LOTR. To find it for another Whitestar title, use the debugger: watch writes around
+the known LOTR value and correlate with bank switches, or trace the routine that
+writes `$3200`.
+
+### Step 3 — Build the switch + lamp atlases (judgment work — you do this)
+
+The atlases are how later work reads `pulse("ring_scoop")` and "is the
+`mode_start` lamp lit" instead of magic numbers. Build them incrementally; a
+partial atlas is useful. Sources, in order of reliability:
+
+**A. The table VBS (`tables/<table>.vbs`)** — the wiring, but author-specific:
+- **Switches:** grep for `SolCallback(`, `vpmDictateSol`, `Controller.Switch(`,
+  `PulseSw`, `swCopy`, and the `Sub`/object names they call (e.g. `SolTower`,
+  `bsTL.SolOut`). These tie a switch/solenoid **number** to a playfield object
+  whose name often reveals identity. Dedicated/flipper switches show up as named
+  constants (`sLRFlipper`).
+- **Lamps:** find `Sub UpdateLamps` (or a `LampCallback`). Many tables list
+  `Lamp N, lN` where `N` is the PinMAME lamp number and `lN` is a VPX light
+  object — generic, so the number is confirmed but the **identity isn't**; that
+  comes from the manual or empirics. Some tables instead name the light objects
+  descriptively or position them on the playfield (correlate to identity).
+- Expect every table to differ. Use the VBS to enumerate the **numbers that
+  exist** and any names the author left; don't expect it to hand you identities.
+
+**B. The operator manual's Switch/Lamp Matrix pages — THE primary source.**
+This is far superior to VBS guessing or empirical probing: the matrix pages name
+every switch and lamp at its grid position, and the numbers map **directly** to the
+PinMAME numbers the tools use. Process:
+
+1. **Get the manual as a PDF.** Find it via **IPDB** (`ipdb.org/machine.cgi?id=<id>`)
+   or search `"<manufacturer> <game> pinball manual pdf"` (`sternpinball.com`,
+   `pinballrebel.com`, archive.org). Save it (e.g. to `~/Downloads`). Prefer the PDF
+   over djvu-text: the matrix grids are graphical and OCR-text of them is jumbled.
+2. **Ask the user which pages hold the matrices** — "which PDF page is the Switch
+   Matrix, and which is the Lamp Matrix?" (or which page range to scan). The user
+   flipping to the right page is far cheaper than you rasterizing dozens of pages
+   blind. For LOTR these were **page 6 (switches)** and **page 7 (lamps)**.
+3. **Rasterize just those pages/regions to PNG and read them visually.** Use
+   **PyMuPDF** (`pip install pymupdf` — a self-contained wheel; `pdftoppm`/`pdftotext`
+   are often not installed and OCR mangles grids). Render **quadrant crops at 6–8×
+   zoom** so cell text is legible; full pages at low zoom are unreadable:
+   ```python
+   import fitz
+   doc = fitz.open(r"C:/Users/<you>/Downloads/<game>-Manual.pdf")
+   page = doc[6]                                  # 0-indexed: PDF page 7
+   r = page.rect
+   clip = fitz.Rect(0, r.height*0.09, r.width*0.5, r.height*0.24)   # top-left quadrant
+   page.get_pixmap(matrix=fitz.Matrix(7,7), clip=clip).save(r"C:/.../crop.png")
+   ```
+   Then Read the PNG (the Read tool shows images visually). Walk the grid
+   column-by-column / row-by-row, anchoring on the column-drive headers (Qn / Un)
+   and the small per-cell number boxes.
+4. **Derive the cell→number formula from the visible cell numbers, don't assume it.**
+   The two matrices index OPPOSITELY and it's table-family-specific:
+   - **Stern/Sega Whitestar switches: column-major** `switch = (col-1)*8 + row`
+     (8×8 = 1-64); dedicated flipper switches are separate (81-84).
+   - **Stern/Sega Whitestar lamps: row-major** `lamp = (row-1)*8 + col`
+     (8 cols × 10 rows = 1-80); numbers >80 are flashers/aux.
+   Read a few labelled cells (e.g. row 1 = 1,2,3,4… vs 1,9,17…) to confirm which
+   way it runs before trusting the rest. These numbers are the PinMAME numbers.
+
+**C. The table VBS (`tables/<table>.vbs`)** — secondary, fills gaps the manual omits
+and confirms which numbers actually exist:
+- **Switches:** grep `SolCallback(`, `Controller.Switch(`, `PulseSw`, and the object
+  names they call (`bsTL.SolOut`, `SolTower`) — ties a number to a playfield object.
+- **Lamps:** `Sub UpdateLamps` lists `Lamp N, lN` (N = PinMAME number, lN = generic
+  VPX light object — confirms the number exists; identity comes from the manual).
+- Author-specific; use it to enumerate numbers, not to name them.
+
+**D. Empirical confirmation (the tiebreaker).** Run a session with `--trace state`
+(+`dmd` for context) and read `trace.state.jsonl`: each `{"kind":"lamp","n":N,...}`
+(and `sw`) uses the same PinMAME number. Integrate a lamp's on-time over a window
+where it should be lit (from the DMD) vs a contrast window. **Cross-check the matrix
+against known switches** (e.g. confirm sw9=LEFT VUK, the jets, slings) — if the
+empirical switches match the matrix, the lamp numbering is the same direct mapping.
+Beware lamp PWM/flashing and shots needing entrance+made switch pairs (a lone pulse
+won't "make" a ramp/orbit), which make pure probing unreliable — the matrix is why
+this step is a *check*, not the primary method.
+
+Record findings as you go (`verified: true` once empirically confirmed) and pin
+durable identities into the atlases so the next session starts ahead. (Worked
+example: the LOTR project's `notes/15` + `names/lotr.json` + `lamps/lotr.json`.)
+
 ## Acquiring game files (ROM zip + VPX table)
 
 Each game needs **two** files: a ROM zip and a VPX table. Neither is auto-downloaded.
@@ -134,7 +274,9 @@ Each game needs **two** files: a ROM zip and a VPX table. Neither is auto-downlo
 
 ### Workflow when a user asks for game files
 
-1. **Confirm the game.** Williams/Bally WPC-era only (1990s).
+1. **Confirm the game.** Williams/Bally WPC (1990s) or Sega/Stern Whitestar
+   (e.g. Lord of the Rings) — both share the 6809 core; set `platform` in
+   `game.json` accordingly (see "Per-game project setup" above).
 
 2. **Send the user to one of these sites** (both free, one-time account):
    - **VPUniverse** — `https://vpuniverse.com/` — VPX Tables → search.
@@ -199,7 +341,7 @@ needs to be able to *create* a venv. Additionally:
 ### macOS
 - **cmake 3.25+**, **Xcode Command Line Tools** (`xcode-select --install`), **git** — only needed for the rare libpinmame *source-build* fallback (the prebuilt `lib/libpinmame.dylib` covers the common case). `setup-pinball.py` checks these only when it actually has to build.
 
-The only third-party Python dependency is Pillow (used by the DMD-render tools), installed into the venv by `setup-pinball.py`; everything else is stdlib-only.
+The third-party Python dependencies are Pillow (DMD-render tools) and PyMuPDF (rasterizing operator-manual matrix pages for the atlases), installed into the venv by `setup-pinball.py`; everything else is stdlib-only.
 
 ## File layout
 

@@ -37,7 +37,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from workbench_env import bootstrap_venv, load_config
+from workbench_env import bootstrap_venv, load_config, load_game_manifest
 
 
 VALID_TRACES = ("state", "dmd", "sound", "dbg")
@@ -80,6 +80,16 @@ def parse_args() -> argparse.Namespace:
                          "TCP socket (drive with dbg.py) until 'quit'. Implies --trace dbg.")
     ap.add_argument("--dbg-port", type=int, default=47655,
                     help="TCP port for the interactive control socket. Default 47655.")
+    ap.add_argument("--policy", type=Path, default=None,
+                    help="Closed-loop reactive control: a Python file exposing "
+                         "build_policy(ctx)/Policy/step(ctx). The host calls step(ctx) "
+                         "live (sense lamps/RAM, act via pulse/set_switch); --session "
+                         "becomes a plunge preamble. The run is recorded to "
+                         "<out>/session.jsonl for deterministic replay without --policy.")
+    ap.add_argument("--policy-step-sec", type=float, default=0.02,
+                    help="Decision cadence for --policy (sim seconds). Default 0.02.")
+    ap.add_argument("--policy-arg", action="append", default=[], metavar="KEY=VAL",
+                    help="Extra KEY=VAL forwarded to the policy via ctx.args (repeatable).")
     ap.add_argument("--out-dir", type=Path, default=None,
                     help="Output dir. Default: <session>/replays/<rom-zip-stem>/<utc>/.")
     ap.add_argument("--sim-step", type=float, default=0.001,
@@ -92,13 +102,15 @@ def parse_args() -> argparse.Namespace:
                          "Default 1.0.")
     ap.add_argument("--overwrite", action="store_true",
                     help="Allow --out-dir to exist.")
-    ap.add_argument("--platform", choices=("wpc", "whitestar"), default="wpc",
-                    help="ROM-bank resolution for the dbg trace. Default wpc. Use "
-                         "'whitestar' for Sega/Stern (e.g. LOTR) so banked PCs in "
-                         "dbg/interactive resolve to the right page.")
+    ap.add_argument("--platform", choices=("wpc", "whitestar"), default=None,
+                    help="ROM-bank resolution for the dbg trace. Use 'whitestar' "
+                         "for Sega/Stern (e.g. LOTR) so banked PCs in dbg/interactive "
+                         "resolve to the right page. Default: the working-dir "
+                         "game.json 'platform', else wpc.")
     ap.add_argument("--bank-shadow", default=None,
                     help="Whitestar only: game-RAM address shadowing the bank "
-                         "register (default 0x0243, verified for LOTR).")
+                         "register. Default: the working-dir game.json 'bank_shadow', "
+                         "else 0x0243 (verified for LOTR).")
     return ap.parse_args()
 
 
@@ -115,6 +127,16 @@ def main() -> int:
     bootstrap_venv()  # re-exec under the toolkit venv if not already there
     load_config()  # recover PINMAME_DIR from config.env if not already in the env
     args = parse_args()
+
+    # Platform/bank-shadow default from the per-game manifest (game.json) so the
+    # caller doesn't re-specify them every run; an explicit CLI flag still wins.
+    manifest = load_game_manifest() or {}
+    if args.platform is None:
+        args.platform = manifest.get("platform", "wpc")
+    if args.bank_shadow is None and args.platform == "whitestar":
+        args.bank_shadow = manifest.get("bank_shadow")
+    if args.platform == "whitestar":
+        print(f"==> platform: whitestar  bank_shadow={args.bank_shadow or '0x0243 (host default)'}")
 
     if not args.session.is_dir():
         raise SystemExit(f"Session must be a directory: {args.session}")
@@ -207,6 +229,11 @@ def main() -> int:
         if args.dbg_mem:       cmd += ["--dbg-mem", args.dbg_mem]
     if args.interactive:
         cmd += ["--interactive", "--dbg-port", str(args.dbg_port)]
+    if args.policy:
+        cmd += ["--policy", str(args.policy.resolve()),
+                "--policy-step-sec", f"{args.policy_step_sec:.4f}"]
+        for kv in args.policy_arg:
+            cmd += ["--policy-arg", kv]
 
     if args.interactive:
         print(f"==> replay_host: INTERACTIVE session, control port {args.dbg_port}")

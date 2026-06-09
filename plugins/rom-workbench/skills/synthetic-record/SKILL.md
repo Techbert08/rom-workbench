@@ -76,19 +76,21 @@ authority for the switch you care about:
    models (start, trough, slings, jets, lanes, coin door): the game's
    `src/wpc/*.c` in the PinMAME tree (for Congo, `prelim/congo.c`). **It does not
    include most playfield targets** — the prelim sim doesn't model them.
-2. **The table VBScript** (`orig/<table>.vbs`) — maps physical playfield objects
+2. **The table VBScript** (`tables/<table>.vbs`) — maps physical playfield objects
    to the switch numbers the ROM reads (`Controller.Switch(n)` /
    `vpmTimer.PulseSw n`), so it covers the targets the driver omits, but its
-   human labels are sparse. Extract it from the table once:
+   human labels are sparse. The `setup` skill's per-game project setup extracts it
+   once; if it isn't there yet:
 
    ```bash
-   # macOS / Linux
-   VPinballX_GL --extractvbs orig/<table>.vpx      # writes orig/<table>.vbs
-   # Windows
-   VPinballX.exe -ExtractVBS orig\<table>.vpx
+   VPinballX_GL --extractvbs tables/<table>.vpx     # macOS/Linux -> tables/<table>.vbs
+   VPinballX.exe -ExtractVBS tables\<table>.vpx      # Windows
    ```
 
-   Then grep the `.vbs` for `Controller.Switch(` / `PulseSw` to read the wiring.
+   Then grep the `.vbs` for `Controller.Switch(` / `PulseSw` / `SolCallback(` to
+   read the wiring. (VBScripts are author-specific — see the `setup` skill's
+   "Building the switch + lamp atlases" guidance for how to read them and the
+   manual.)
 3. **Empirical, from a real recording** — the definitive answer to "which
    switch *does* X". Replay a session that exercised the feature with a
    `--watch-w` on the RAM the feature touches, and read the switch edge that
@@ -96,9 +98,10 @@ authority for the switch you care about:
    targets were pinned (replay with `--watch-w 0x068F`, the satellite counter;
    the two scoring hits were preceded by sw52 and sw51).
 
-Record the numbers you pin as names in `./names/<rom>.json` in your working
-directory (a `{"<num>": "<name>"}` map; see `schemas/names.schema.json`), so
-future scenarios read `pulse("travi")` not `pulse(51)`.
+Record the numbers you pin into the working-dir atlases — `./names/<rom>.json`
+(switches; `schemas/names.schema.json`) and `./lamps/<rom>.json` (lamps;
+`schemas/lamps.schema.json`) — so future scenarios read `pulse("travi")` not
+`pulse(51)` and can sense lamps by name. The `setup` skill seeds these.
 
 ## The builder API (`synth.py`)
 

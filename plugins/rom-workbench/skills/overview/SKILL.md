@@ -73,14 +73,21 @@ All per-mod work happens in one project directory (not in the plugin):
 
 ```
 <your-mod-dir>/
-├── orig/        # factory ROM zip (and extracted <table>.vbs)
-├── tables/      # the Visual Pinball .vpx table
+├── game.json    # per-game manifest: platform (wpc/whitestar) + flags the tools read
+├── orig/        # factory ROM zip
+├── tables/      # the Visual Pinball .vpx table (and its extracted <table>.vbs)
 ├── dist/        # built modded ROM zips
 ├── source/patches/   # JSON patch specs the build applies
 ├── sessions/    # recorded + synthetic sessions and their replays
-├── names/       # ./names/<rom>.json — your switch-number → name map
+├── names/       # ./names/<rom>.json — switch-number → name atlas
+├── lamps/       # ./lamps/<rom>.json — lamp-number → name atlas
 └── notes/       # findings worth keeping across sessions
 ```
+
+`game.json` (schema `schemas/game.schema.json`) records the platform and, for
+Whitestar, the `bank_shadow` address, so `replay.py` defaults `--platform` /
+`--bank-shadow` from it — no per-call flags. The `setup` skill's "Per-game
+project setup" section covers building it plus the switch/lamp atlases.
 
 ## Cross-session memory
 

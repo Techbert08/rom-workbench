@@ -1,0 +1,71 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://github.com/Techbert08/rom-workbench/record/lamps.schema.json",
+    "title": "per-game lamp atlas",
+    "description": "Human-authored lamp map for one game ROM — the lamp counterpart to ./names/<rom>.json (switches). Lives in the working directory by convention at ./lamps/<rom>.json (alongside ./orig, ./tables, ./names, ./sessions). Maps each PinMAME lamp number (a decimal string key, the same number ctx.get_lamp(n) / GetChangedLamps report) to a name or a richer descriptor. There is no mechanical extractor — lamp identities are reverse-engineered per table from the manual's lamp matrix plus the table .vbs and empirical observation; see the setup skill's 'Building the switch + lamp atlas' guidance. None ship with the plugin; create one per ROM as you pin lamps. This schema is informational — nothing validates against it at runtime.",
+    "type": "object",
+    "patternProperties": {
+        "^[0-9]+$": {
+            "oneOf": [
+                {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Shorthand: just the machine-friendly name for this lamp number (e.g. \"mode_start\")."
+                },
+                {
+                    "type": "object",
+                    "description": "Full descriptor for one lamp.",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Machine-friendly slug used in code/policies (e.g. \"mode_start\", \"lramp_elf_ring\")."
+                        },
+                        "label": {
+                            "type": "string",
+                            "description": "Human label exactly as printed in the manual's lamp matrix (e.g. \"MODE START\", \"WAR OF THE ENTS\")."
+                        },
+                        "col": {
+                            "type": "integer",
+                            "description": "Lamp-matrix column (drive). Together with row, fixes the matrix cell the manual lists."
+                        },
+                        "row": {
+                            "type": "integer",
+                            "description": "Lamp-matrix row (return)."
+                        },
+                        "color": {
+                            "type": "string",
+                            "description": "Insert/bulb color if known (e.g. \"white\", \"red\", \"green\")."
+                        },
+                        "group": {
+                            "type": "string",
+                            "description": "Optional grouping for related lamps (e.g. \"ring_modes\", \"elf_ring_shots\", \"backpanel\")."
+                        },
+                        "switch": {
+                            "type": "integer",
+                            "description": "Optional: the switch number whose shot lights/collects this lamp, when the lamp marks a shot (e.g. an Elf Ring shot lamp -> the ramp/orbit switch that scores it)."
+                        },
+                        "verified": {
+                            "type": "boolean",
+                            "description": "true once the number has been confirmed empirically (lamp observed on in a known game state), as opposed to inferred from the manual matrix alone."
+                        },
+                        "desc": {
+                            "type": "string",
+                            "description": "Free-text notes."
+                        }
+                    },
+                    "required": ["name"],
+                    "additionalProperties": false
+                }
+            ]
+        }
+    },
+    "additionalProperties": false,
+    "examples": [
+        {
+            "46": { "name": "mode_start", "label": "MODE START", "col": 5, "row": 6, "group": "ring_modes" },
+            "51": { "name": "lramp_elf_ring", "label": "LRAMP ELF RING", "col": 6, "row": 1, "group": "elf_ring_shots", "switch": 20 },
+            "80": { "name": "war_of_the_ents", "label": "WAR OF THE ENTS", "col": 8, "row": 10, "group": "ring_modes", "verified": true }
+        }
+    ]
+}

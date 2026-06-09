@@ -269,6 +269,9 @@ def load_libpinmame(pinmame_dir: Path) -> ctypes.CDLL:
     if hasattr(lib, "PinmameReadMainCPUByte"):
         lib.PinmameReadMainCPUByte.argtypes = [ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint8)]
         lib.PinmameReadMainCPUByte.restype = ctypes.c_int
+    if hasattr(lib, "PinmameWriteMainCPUByte"):
+        lib.PinmameWriteMainCPUByte.argtypes = [ctypes.c_uint32, ctypes.c_uint8]
+        lib.PinmameWriteMainCPUByte.restype = ctypes.c_int
 
     # Change-batch APIs used by the state trace (callback-free for lamps/GIs).
     lib.PinmameGetChangedSolenoids.argtypes = [ctypes.POINTER(PinmameSolenoidState)]
@@ -434,6 +437,21 @@ def main(argv: list[str]) -> int:
                     help="Whitestar only: game-RAM address mirroring the ROM bank "
                          "register ($3200). Default 0x0243 (verified for LOTR). "
                          "Ignored under --platform wpc.")
+    ap.add_argument("--policy", type=Path, default=None,
+                    help="Path to a Python file exposing build_policy(ctx)->policy "
+                         "(or a Policy class / step(ctx) callable). Runs CLOSED-LOOP: "
+                         "the host calls policy.step(ctx) every --policy-step-sec with a "
+                         "ctx that can sense (get_lamp/changed_lamps/read_ram/read_window), "
+                         "act (pulse/set_switch, auto-released), record() and stop(). The "
+                         "--session events still inject (use them as a plunge preamble); "
+                         "every emitted edge is logged so out/session.jsonl replays the run "
+                         "deterministically without the policy.")
+    ap.add_argument("--policy-step-sec", type=float, default=0.02,
+                    help="Decision cadence for --policy (sim seconds between step() "
+                         "calls). Default 0.02 (50 Hz). The fixed switch stream still "
+                         "injects at full sim-step resolution.")
+    ap.add_argument("--policy-arg", action="append", default=[], metavar="KEY=VAL",
+                    help="Extra KEY=VAL passed to the policy via ctx.args (repeatable).")
     args = ap.parse_args(argv)
 
     traces = set(t.strip() for t in args.trace.split(",") if t.strip())
@@ -1195,11 +1213,99 @@ def main(argv: list[str]) -> int:
     _meta, events = read_session(args.session)
     log(f"[replay_host] {len(events)} switch events from session")
 
+    # --- Closed-loop policy hook --------------------------------------------
+    # When --policy is given, a Python policy steers the run live: each decision
+    # tick the host calls policy.step(ctx) with a ctx that can sense lamps/RAM
+    # and act (pulse/set_switch). Every edge the policy emits is recorded
+    # alongside the fixed --session edges so out/session.jsonl replays the whole
+    # run deterministically WITHOUT the policy.
+    policy = None
+    policy_emitted: list[tuple[float, int, int]] = []   # (t, n, on) edges the policy drove
+    policy_releases: list[tuple[float, int]] = []        # pending (release_t, n) for pulse()
+    policy_stop = {"stop": False}
+    policy_log_writer: Optional[JsonlWriter] = None
+    if args.policy is not None:
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location("rw_policy", str(args.policy))
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        policy_log_writer = JsonlWriter(args.out / "policy.jsonl")
+        _have_membyte_p = hasattr(lib, "PinmameReadMainCPUByte")
+        _have_writebyte_p = hasattr(lib, "PinmameWriteMainCPUByte")
+
+        def _pol_read(addr: int):
+            if not _have_membyte_p:
+                return None
+            out = ctypes.c_uint8(0)
+            lib.PinmameReadMainCPUByte(ctypes.c_uint32(addr & 0xFFFF), ctypes.byref(out))
+            return int(out.value)
+
+        def _pol_write(addr: int, value: int) -> bool:
+            if not _have_writebyte_p:
+                return False
+            return bool(lib.PinmameWriteMainCPUByte(
+                ctypes.c_uint32(addr & 0xFFFF), ctypes.c_uint8(value & 0xFF)))
+
+        class _PolicyCtx:
+            """Live interface handed to policy.step() each decision tick."""
+            def __init__(self):
+                self.t = 0.0
+                self.changed_lamps: dict[int, int] = {}   # {lampNo: state} since last step
+                self.args = {}
+                for kv in args.policy_arg:
+                    k, _, v = kv.partition("=")
+                    self.args[k.strip()] = v.strip()
+            # -- sense --
+            def get_lamp(self, n: int) -> int:
+                return int(lib.PinmameGetLamp(int(n)))
+            def read_ram(self, addr: int):
+                return _pol_read(addr)
+            def read_window(self, addr: int, length: int) -> list:
+                return [_pol_read(addr + i) for i in range(length)]
+            def write_ram(self, addr: int, value: int) -> bool:
+                """Poke a live RAM byte (needs PinmameWriteMainCPUByte in the DLL)."""
+                return _pol_write(addr, value)
+            # -- act (recorded + auto-released) --
+            def set_switch(self, n: int, on) -> None:
+                on = 1 if on else 0
+                lib.PinmameSetSwitch(int(n), on)
+                policy_emitted.append((round(self.t, 6), int(n), on))
+            def pulse(self, n: int, width: float = 0.04) -> None:
+                self.set_switch(n, 1)
+                policy_releases.append((self.t + float(width), int(n)))
+            # -- bookkeeping --
+            def record(self, rec: dict) -> None:
+                r = {"t": round(self.t, 6)}; r.update(rec)
+                policy_log_writer.write(r)
+            def log(self, msg: str) -> None:
+                log(f"[policy] t={self.t:.2f} {msg}")
+            def stop(self) -> None:
+                policy_stop["stop"] = True
+
+        policy_ctx = _PolicyCtx()
+        _builder = getattr(_mod, "build_policy", None)
+        if _builder is not None:
+            policy = _builder(policy_ctx)
+        elif hasattr(_mod, "Policy"):
+            policy = _mod.Policy(policy_ctx)
+        elif hasattr(_mod, "step"):
+            policy = _mod          # module-level step(ctx)
+        else:
+            raise SystemExit(f"--policy {args.policy}: no build_policy()/Policy/step found")
+        log(f"[replay_host] policy loaded from {args.policy} "
+            f"(step every {args.policy_step_sec*1000:.0f}ms)")
+
     # --- SetTimeFence-paced loop --------------------------------------------
 
     sim_t = 0.0
     step = args.sim_step
-    max_t = min(args.max_sec, (events[-1].t + args.tail_sec) if events else args.max_sec)
+    # A policy run is open-ended (it ends via ctx.stop() or --max-sec); the
+    # fixed --session is just a preamble, so don't let its last edge bound max_t.
+    if policy is not None:
+        max_t = args.max_sec
+    else:
+        max_t = min(args.max_sec, (events[-1].t + args.tail_sec) if events else args.max_sec)
+    next_policy_at = 0.0
 
     # Lamp / GI delta buffers. libpinmame caps these at CORE_MAXLAMPS and
     # CORE_MAXGI internally; allocate generously.
@@ -1245,7 +1351,8 @@ def main(argv: list[str]) -> int:
             "falling back to open-loop sleep pacing (timing may drift)")
 
     try:
-        while (not dbg_stop_flag["stop"]) if interactive_mode else (sim_t < max_t):
+        while ((not dbg_stop_flag["stop"]) if interactive_mode
+               else (sim_t < max_t and not policy_stop["stop"])):
             # Heartbeat: one line every N sim-seconds so a long run isn't a black box.
             if sim_t >= next_heartbeat_at:
                 wall = time.perf_counter() - start_wall
@@ -1308,16 +1415,22 @@ def main(argv: list[str]) -> int:
             # the outputs whose averaged state crossed a boundary since
             # the last call. Cheap (one ctypes call returning count + N
             # struct entries) and event-shaped (only changes written).
-            if state_writer is not None:
+            if state_writer is not None or policy is not None:
                 n = int(lib.PinmameGetChangedLamps(lamp_buf))
                 for i in range(n):
                     s = lamp_buf[i]
-                    state_writer.write(
-                        {"t": sim_t, "kind": "lamp",
-                         "n": int(s.lampNo), "v": int(s.state)}
-                    )
-                    state_event_counter[0] += 1
-                if hasattr(lib, "PinmameGetChangedGIs"):
+                    if policy is not None:
+                        # Accumulate across ticks until the next policy.step()
+                        # consumes them, so a fast lamp flip isn't missed between
+                        # decision ticks.
+                        policy_ctx.changed_lamps[int(s.lampNo)] = int(s.state)
+                    if state_writer is not None:
+                        state_writer.write(
+                            {"t": sim_t, "kind": "lamp",
+                             "n": int(s.lampNo), "v": int(s.state)}
+                        )
+                        state_event_counter[0] += 1
+                if state_writer is not None and hasattr(lib, "PinmameGetChangedGIs"):
                     n = int(lib.PinmameGetChangedGIs(gi_buf))
                     for i in range(n):
                         s = gi_buf[i]
@@ -1329,6 +1442,25 @@ def main(argv: list[str]) -> int:
 
             # (Solenoids: OnSolenoidUpdated callback — no work here.)
             # (Debugger trace: dedicated worker thread — no work here.)
+
+            # Closed-loop policy: release any pulses now due, then -- on the
+            # decision cadence -- hand the policy the live machine state so it
+            # can sense and act. Releases run every sim-step (full resolution);
+            # step() runs every --policy-step-sec.
+            if policy is not None:
+                while policy_releases and policy_releases[0][0] <= sim_t:
+                    _, rn = policy_releases.pop(0)
+                    lib.PinmameSetSwitch(rn, 0)
+                    policy_emitted.append((round(sim_t, 6), int(rn), 0))
+                if sim_t >= next_policy_at:
+                    policy_ctx.t = sim_t
+                    try:
+                        policy.step(policy_ctx)
+                    except Exception as e:
+                        log(f"[policy] step() raised at t={sim_t:.2f}: {e!r}; stopping")
+                        policy_stop["stop"] = True
+                    policy_ctx.changed_lamps = {}
+                    next_policy_at += args.policy_step_sec
 
             sim_t += step
 
@@ -1379,6 +1511,28 @@ def main(argv: list[str]) -> int:
             dbg_writer.write({"kind": "trace_end", "end_ts": end_ts, "sim_t": sim_t,
                               "total_hits": dbg_hit_counter[0]})
             dbg_writer.close()
+        if policy is not None:
+            # Persist the run as a plain switch session: the fixed preamble edges
+            # PLUS every edge the policy drove, time-sorted. Replaying this WITHOUT
+            # --policy reproduces the exact run (adaptive authoring, deterministic
+            # playback). Written to out/session.jsonl alongside the input session.
+            if policy_log_writer is not None:
+                policy_log_writer.write({"kind": "trace_end", "end_ts": end_ts,
+                                         "sim_t": sim_t, "n_emitted": len(policy_emitted)})
+                policy_log_writer.close()
+            merged = [(e.t, e.n, 1 if e.on else 0) for e in events] + policy_emitted
+            merged.sort(key=lambda x: (x[0], x[1], x[2]))
+            sess_out = args.out / "session.jsonl"
+            with sess_out.open("w", encoding="utf-8", newline="\n") as f:
+                f.write(json.dumps({"v": 1, "kind": "meta", "rom": args.rom,
+                                    "mode": "ReactivePolicy", "synthetic": True,
+                                    "policy": str(args.policy), "start_ts": end_ts,
+                                    "comment": "Recorded from a closed-loop --policy run"})
+                        + "\n")
+                for t, n, on in merged:
+                    f.write(json.dumps({"t": t, "n": n, "on": on, "kind": "switch"}) + "\n")
+            log(f"[replay_host] wrote {sess_out} "
+                f"({len(events)} preamble + {len(policy_emitted)} policy edges)")
 
     drift_note = (f" max_inject_drift={max_inject_drift[0] * 1000:.1f}ms"
                   if have_emu_clock else " (open-loop; no drift measurement)")

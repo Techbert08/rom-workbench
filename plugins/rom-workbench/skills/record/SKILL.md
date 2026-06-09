@@ -451,7 +451,9 @@ ${CLAUDE_PLUGIN_ROOT}/
 └── schemas/                          # informational JSON Schemas (nothing validates against them at runtime)
     ├── session.schema.json           # session.jsonl contract (record.py output)
     ├── trace.schema.json             # replay trace-output contract
-    └── names.schema.json             # ./names/<rom>.json switch-name map (working-dir, synthetic-record)
+    ├── names.schema.json             # ./names/<rom>.json switch-name map (working-dir, synthetic-record)
+    ├── lamps.schema.json             # ./lamps/<rom>.json lamp atlas (working-dir)
+    └── game.schema.json              # ./game.json per-game manifest (platform/bank_shadow; replay.py reads it)
 ```
 
 `record.py` is one cross-platform recorder: it picks the right Visual Pinball

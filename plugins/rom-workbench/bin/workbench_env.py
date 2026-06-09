@@ -33,6 +33,7 @@ Stdlib-only; importable as a sibling module because each entrypoint runs as
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -173,6 +174,58 @@ def _config_value(key: str) -> "str | None":
         if sep and k.strip() == key:
             return v.strip().strip('"').strip("'")
     return None
+
+
+# =============================================================================
+# Per-game project manifest (lives in the mod working directory)
+# =============================================================================
+#
+# config.env (above) is *machine* config: where the toolchain is installed.
+# game.json is *per-game* config: which ROM this working directory mods and the
+# facts the tools need to drive it correctly — above all the emulation platform
+# (wpc vs whitestar) and, for whitestar, the RAM address that shadows the ROM
+# bank register. Capturing those once at project-setup time means later commands
+# don't have to re-specify --platform/--bank-shadow on every invocation; the
+# tools read the manifest and default to it (an explicit CLI flag still wins).
+#
+# It is intentionally a working-directory file (like ./orig, ./tables, ./names,
+# ./lamps), not part of the plugin and not under the app-data dir — it travels
+# with the mod project. Schema: schemas/game.schema.json.
+
+GAME_MANIFEST_NAME = "game.json"
+
+
+def find_game_manifest(start: "Path | None" = None) -> "Path | None":
+    """Locate game.json by walking up from `start` (default: CWD).
+
+    Returns the first game.json found at or above the starting directory, or
+    None. Walking upward lets tools run from a subdirectory (e.g. sessions/)
+    and still find the project manifest at the mod root."""
+    here = (start or Path.cwd()).resolve()
+    for d in (here, *here.parents):
+        cand = d / GAME_MANIFEST_NAME
+        if cand.is_file():
+            return cand
+    return None
+
+
+def load_game_manifest(start: "Path | None" = None) -> "dict | None":
+    """Parse the per-game manifest (game.json), or None if absent/unreadable.
+
+    Never raises on a malformed file — a warning is printed and None returned —
+    so a typo in the manifest degrades to "no defaults", not a hard failure."""
+    path = find_game_manifest(start)
+    if path is None:
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            warn(f"{path} is not a JSON object; ignoring.")
+            return None
+        return data
+    except (OSError, ValueError) as e:
+        warn(f"could not read {path}: {e}")
+        return None
 
 
 # =============================================================================

@@ -1,0 +1,77 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://github.com/Techbert08/rom-workbench/record/game.schema.json",
+    "title": "per-game project manifest",
+    "description": "Per-mod-project manifest. Lives at the working-directory root by convention as ./game.json (alongside ./orig, ./tables, ./names, ./lamps, ./sessions). Records which ROM this directory mods and the facts the tools need to drive it correctly without re-specifying them on every command — chiefly the emulation platform (wpc vs whitestar) and, for whitestar, the RAM address shadowing the ROM bank register. The setup skill writes a draft during project setup; you fill in the rest as you learn the game. replay.py reads 'platform'/'bank_shadow' to default --platform/--bank-shadow (an explicit CLI flag still wins). Unknown keys are allowed so the file can also serve as a human index of reference material (manual URL, ipdb id, notes).",
+    "type": "object",
+    "properties": {
+        "rom": {
+            "type": "string",
+            "description": "PinMAME ROM identifier / gamename (e.g. \"lotr\", \"congo_21\"). The basename used for ./names/<rom>.json, ./lamps/<rom>.json, and the staged ROM zip."
+        },
+        "title": {
+            "type": "string",
+            "description": "Human title (e.g. \"The Lord of the Rings\")."
+        },
+        "manufacturer": {
+            "type": "string",
+            "description": "e.g. \"Stern\", \"Williams\", \"Bally\"."
+        },
+        "year": {
+            "type": "integer",
+            "description": "Release year."
+        },
+        "platform": {
+            "type": "string",
+            "enum": ["wpc", "whitestar"],
+            "description": "Emulation/bank-resolution family. 'wpc' = Williams/Bally WPC (1990s). 'whitestar' = Sega/Stern Whitestar (e.g. LOTR). Selects ROM-bank resolution in the debugger/simulator; also a reminder that the disassembler (rom.py) auto-detects Whitestar geometry from ROM file sizes."
+        },
+        "bank_shadow": {
+            "type": "string",
+            "description": "Whitestar only: hex string for the game-RAM address mirroring the $3200 ROM-bank register (e.g. \"0x0243\", verified for LOTR). Used by replay.py/replay_host.py to resolve banked PCs in dbg/interactive. Ignored under platform 'wpc'."
+        },
+        "table": {
+            "type": "string",
+            "description": "Path (relative to the project root) to the .vpx table used for recording."
+        },
+        "vbs": {
+            "type": "string",
+            "description": "Path to the extracted table VBScript (e.g. \"tables/<table>.vbs\"). The atlas-building source of truth for switch/lamp wiring; extracted once during setup so other skills don't re-extract it."
+        },
+        "ipdb": {
+            "type": "integer",
+            "description": "Internet Pinball Database machine id (ipdb.org/machine.cgi?id=...), for quick reference."
+        },
+        "manual_url": {
+            "type": "string",
+            "description": "URL of the operator manual used for the switch/lamp matrices (e.g. an archive.org djvu-text page)."
+        },
+        "notes": {
+            "type": "string",
+            "description": "Free-text project notes."
+        }
+    },
+    "required": ["rom", "platform"],
+    "additionalProperties": true,
+    "examples": [
+        {
+            "rom": "lotr",
+            "title": "The Lord of the Rings",
+            "manufacturer": "Stern",
+            "year": 2003,
+            "platform": "whitestar",
+            "bank_shadow": "0x0243",
+            "table": "tables/JP's Lord of the Rings (Stern 2003) v600.vpx",
+            "vbs": "tables/JP's Lord of the Rings (Stern 2003) v600.vbs",
+            "ipdb": 4858,
+            "manual_url": "https://archive.org/stream/SternPinballTheLordOfTheRingsManual/Lord-of-the-Rings-Manual_djvu.txt"
+        },
+        {
+            "rom": "congo_21",
+            "title": "Congo",
+            "manufacturer": "Williams",
+            "year": 1995,
+            "platform": "wpc"
+        }
+    ]
+}
