@@ -44,16 +44,23 @@ import zipfile
 from pathlib import Path
 from typing import List, Optional
 
-from workbench_env import _C, _c, bootstrap_venv, die, load_config, ok, step, warn
+from workbench_env import (
+    _C, _c, bootstrap_venv, die, load_config, load_game_manifest, ok, step, warn,
+)
 
 IS_WIN = os.name == "nt"
 
 
 # =============================================================================
-# WPC ROM geometry
+# ROM geometry (shared by WPC and Sega/Stern Whitestar — both 6809, 0x4000 banks)
 # =============================================================================
 
-# WPC ROM size -> first page number (matches WPCLoader.java).
+# ROM size -> first banked page number. The 6809 banked window is $4000-$7FFF;
+# the top $8000-$FFFF is the always-resident system region (2 pages). WPC and
+# Whitestar share this geometry; for a 128 KiB Whitestar CPU ROM (e.g. LOTR's
+# lotrcpua.a00) the first page is $38 and banked pages run $38-$3D. This table
+# and resolve_address() must stay byte-for-byte identical to rom.py so patch
+# addresses land where the disassembler says they do.
 SIZE_TO_FIRST_PAGE = {
     131072:  0x38,   # 128 KiB
     262144:  0x34,   # 256 KiB
@@ -168,25 +175,103 @@ def disable_checksum(rom: bytearray) -> None:
 
 
 # =============================================================================
+# Sega/Stern Whitestar checksum
+# =============================================================================
+#
+# The Whitestar boot self-test ($9F62 in LOTR) banks each page $38-$3F into the
+# $4000-$7FFF window and accumulates every byte into an 8-bit register B
+# (ADDB ,X+). Pages $3E/$3F alias the fixed $8000-$FFFF region, so the result is
+# the 8-bit sum of the ENTIRE CPU ROM. It then:
+#     LDX $FFEE ; CMPX #$FFFF ; BEQ pass   ; word $FFEE == $FFFF -> skip the test
+#     CMPB #$FF ; BEQ pass                 ; else the 8-bit byte-sum must be $FF
+# So: a correct ROM has (sum of all bytes) & 0xFF == 0xFF, and writing $FFFF at
+# $FFEE disables the check entirely. (Verified: the factory lotrcpua.a00 sums to
+# 0xFF, and $FFEE = 0x84FF -> enforced.) This is unrelated to the WPC delta-word
+# scheme above. See lotr notes/21.
+
+WHITESTAR_CKSUM_TARGET = 0xFF  # required value of (sum of all bytes) & 0xFF
+
+
+def whitestar_update_checksum(rom: bytearray) -> None:
+    """Make the 8-bit byte-sum of the ROM equal 0xFF by tweaking one pad byte.
+
+    Absorbs the patch's effect on the sum into a single unused (0xFF) padding
+    byte so no real code/data changes. No-op if the sum is already correct."""
+    s = sum(rom) & 0xFF
+    if s == WHITESTAR_CKSUM_TARGET:
+        ok(f"Checksum: 8-bit sum already 0x{s:02X}  [OK, no fixup needed]")
+        return
+    # Changing a byte currently 0xFF to v shifts the sum by (v - 0xFF); pick v so
+    # the total lands on 0xFF:  v = (0xFE - s) & 0xFF.
+    v = (0xFE - s) & 0xFF
+    # Find a trailing 0xFF padding byte to use as the adjuster. Stay below $FFEC
+    # so we never touch the checksum word ($FFEE), the WPC-style delta slot
+    # ($FFEC), or the 6809 vectors ($FFF0-$FFFF) — keeps the stored checksum
+    # word stable and can't accidentally form the $FFFF "disabled" sentinel.
+    sys_base = len(rom) - SYS_SIZE
+    vec_off = sys_base + (0xFFEC - 0x8000)
+    pad_off = None
+    for off in range(min(vec_off, len(rom)) - 1, -1, -1):
+        if rom[off] == 0xFF:
+            pad_off = off
+            break
+    if pad_off is None:
+        die("Whitestar checksum: no spare 0xFF padding byte found to absorb the "
+            "correction. Free a byte or pass --disable-checksum.")
+    rom[pad_off] = v
+    verify = sum(rom) & 0xFF
+    if verify != WHITESTAR_CKSUM_TARGET:
+        die(f"Whitestar checksum verify failed: got 0x{verify:02X}, "
+            f"want 0x{WHITESTAR_CKSUM_TARGET:02X}.")
+    ok(f"Checksum: 8-bit sum -> 0x{verify:02X} via pad byte @ 0x{pad_off:05X} "
+       f"(0xFF -> 0x{v:02X})  [OK]")
+
+
+def whitestar_disable_checksum(rom: bytearray) -> None:
+    """Write 0xFFFF at $FFEE so the boot self-test skips ROM verification."""
+    sys_base = len(rom) - SYS_SIZE
+    off = sys_base + (0xFFEE - 0x8000)
+    rom[off] = 0xFF
+    rom[off + 1] = 0xFF
+    warn("Checksum disabled (word $FFEE=0xFFFF). Whitestar boot will skip ROM "
+         "verification. Rebuild without --disable-checksum for distribution.")
+
+
+# =============================================================================
 # Game ROM selection
 # =============================================================================
 
-def pick_game_rom(names: List[str], sizes: dict) -> Optional[str]:
-    """Of the entries with a valid ROM size, pick the most game-ROM-like by name."""
+def pick_game_rom(zf: zipfile.ZipFile, names: List[str], sizes: dict) -> Optional[str]:
+    """Pick the CPU/game ROM from a (possibly multi-file) ROM zip.
+
+    Mirrors rom.py's load_rom() selection so build.py patches the same file the
+    disassembler reads: score by filename (WPC `_g`, Whitestar `cpu`; penalize
+    sound/display/bios), then, among the top scorers, prefer the entry whose
+    6809 reset vector (last two bytes) points into $8000-$FFFF — the structural
+    fingerprint of a real CPU ROM. This is what disambiguates lotrcpua.a00 from
+    the 1 MB BSMT sound ROMs in a Whitestar zip (which all share name-score 0)."""
     import re
 
     def score(name: str) -> int:
         n = name.lower()
         s = 0
-        if re.search(r"_g", n):                s += 10
-        if re.search(r"^[a-z]{2,4}s\d", n):    s -= 10
-        if re.search(r"sound|snd|dcs", n):     s -= 5
+        if "_g" in n:                                           s += 10
+        if "cpu" in n:                                          s += 12
+        if re.match(r"^[a-z]{2,4}s\d", n):                      s -= 10
+        if any(x in n for x in ("sound", "snd", "dcs", "voic", "speech")): s -= 8
+        if any(x in n for x in ("dsp", "disp", "dmd")):         s -= 8
+        if "bios" in n:                                         s -= 20
         return s
 
-    candidates = [n for n in names if sizes[n] in VALID_SIZES]
-    if not candidates:
+    cands = sorted((n for n in names if sizes[n] in VALID_SIZES),
+                   key=score, reverse=True)
+    if not cands:
         return None
-    return max(candidates, key=score)
+    for n in cands:
+        data = zf.read(n)
+        if (data[-2] << 8 | data[-1]) >= 0x8000:
+            return n
+    return cands[0]
 
 
 # =============================================================================
@@ -250,7 +335,7 @@ def main() -> int:
         infos = zf.infolist()
         names = [i.filename for i in infos]
         sizes = {i.filename: i.file_size for i in infos}
-        game_name = pick_game_rom(names, sizes)
+        game_name = pick_game_rom(zf, names, sizes)
         if game_name is None:
             die(f"No valid game ROM found in {rom_zip}.")
         rom = bytearray(zf.read(game_name))
@@ -300,12 +385,20 @@ def main() -> int:
         old_hex = spec.get("old_hex", "???")
         ok(f"  {name:<40} @ 0x{offset:05X}  [{old_hex}] -> [{spec['new_hex']}]")
 
-    # --- Update checksum -----------------------------------------------------
-    step("Checksum")
-    if args.disable_checksum:
-        disable_checksum(rom)
+    # --- Update checksum (platform-specific) ---------------------------------
+    manifest = load_game_manifest()
+    platform = (manifest or {}).get("platform", "wpc").lower()
+    step(f"Checksum (platform={platform})")
+    if platform == "whitestar":
+        if args.disable_checksum:
+            whitestar_disable_checksum(rom)
+        else:
+            whitestar_update_checksum(rom)
     else:
-        update_checksum(rom)
+        if args.disable_checksum:
+            disable_checksum(rom)
+        else:
+            update_checksum(rom)
 
     # --- Repackage zip -------------------------------------------------------
     step(f"Packaging {out_zip}")

@@ -62,6 +62,13 @@ from typing import Optional
 
 # Status codes per libpinmame.h.
 PINMAME_STATUS_OK = 0
+PINMAME_STATUS = {
+    0: "OK",
+    1: "CONFIG_NOT_SET",
+    2: "GAME_NOT_FOUND",
+    3: "GAME_ALREADY_RUNNING",
+    4: "EMULATION_NOT_RUNNING",
+}
 
 # Callback signatures (per libpinmame.h).
 OnStateUpdatedCallback = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_void_p)
@@ -795,7 +802,19 @@ def main(argv: list[str]) -> int:
     log(f"[replay_host] PinmameRun({args.rom})")
     status = lib.PinmameRun(args.rom.encode("utf-8"))
     if status != PINMAME_STATUS_OK:
-        raise RuntimeError(f"PinmameRun returned status {status}")
+        name = PINMAME_STATUS.get(status, "UNKNOWN")
+        hint = ""
+        if status == 2:  # GAME_NOT_FOUND
+            hint = (
+                f"\n  PinMAME has no driver named '{args.rom}'. The driver is "
+                f"looked up by the --rom NAME, not the zip's filename. A modded "
+                f"ROM must reuse the real game's name: stage the patched zip AS "
+                f"'<realgame>.zip' and pass --rom <realgame> (e.g. --rom lotr "
+                f"--rom-zip dist/lotr_modded.zip). Tools that derive the name from "
+                f"the zip stem (init_nvram) only strip a trailing _modded/_mod - "
+                f"for any other zip name pass --rom <realgame> explicitly."
+            )
+        raise RuntimeError(f"PinmameRun returned status {status} ({name}).{hint}")
 
     # Register debug breakpoints/watchpoints and start the worker thread.
     # The thread blocks on PinmameDebugWait — when the emulator's m6809
@@ -1258,6 +1277,10 @@ def main(argv: list[str]) -> int:
             # -- sense --
             def get_lamp(self, n: int) -> int:
                 return int(lib.PinmameGetLamp(int(n)))
+            def get_solenoid(self, n: int) -> int:
+                """Live solenoid drive state (1-based sol number). Needed to
+                release a VUK/kicker switch exactly when the ROM ejects."""
+                return int(lib.PinmameGetSolenoid(int(n)))
             def read_ram(self, addr: int):
                 return _pol_read(addr)
             def read_window(self, addr: int, length: int) -> list:

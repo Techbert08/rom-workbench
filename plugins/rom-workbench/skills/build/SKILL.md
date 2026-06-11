@@ -38,6 +38,15 @@ python3 '${CLAUDE_PLUGIN_ROOT}/bin/replay.py' \
     --trace state,dmd
 ```
 
+> **⚠️ ROM name vs. zip filename.** PinMAME looks a game up by the `--rom` NAME
+> (its driver id), NOT the zip's filename. A modded ROM has no driver of its own,
+> so it must REUSE the real game's name: the emulator stages whatever `--rom-zip`
+> you give it under `<--rom>.zip`. Always pass `--rom <realgame>` (e.g. `--rom lotr`)
+> even when `--rom-zip dist/lotr_modded.zip`. `init_nvram.py` derives the name from
+> the zip stem but only strips a trailing `_modded`/`_mod` — so name modded zips
+> `<realgame>_modded.zip`, or pass `--rom <realgame>` explicitly. A wrong name
+> surfaces as `PinmameRun returned status 2 (GAME_NOT_FOUND)`, not a ROM/boot fault.
+
 ## Prerequisites
 
 - **`python3`** on PATH (3.9+). `build.py` is stdlib-only — no extra packages needed.
@@ -105,6 +114,31 @@ There is no byte-sum cap; any single 16-bit value is a valid delta, so any patch
 
 **Disabled** (`--disable-checksum`):
 - Writes `0x00FF` at `$FFEC`. The WPC startup code sees `delta == 0xFF` and skips verification entirely. Safe for development builds; should be replaced with a real checksum before distribution.
+
+## Sega/Stern Whitestar checksum
+
+`build.py` reads `game.json` (`load_game_manifest()`) and, when `platform` is
+`whitestar`, switches both ROM selection and checksum handling:
+
+- **CPU-ROM selection** mirrors `rom.py`: among valid-sized zip entries it scores
+  names (`cpu`/`_g` bonus; `sound`/`dsp`/`bios` penalty) and breaks ties by the
+  6809 reset vector (last two bytes ≥ `$8000`). A multi-file Whitestar zip
+  resolves to the real CPU ROM (e.g. `lotrcpua.a00`) instead of a 1 MB sound ROM.
+- **Banked addresses** (`$NNNN@pXX`) use the same `SIZE_TO_FIRST_PAGE` table as
+  `rom.py`; a 128 KiB CPU ROM has first page `$38` (banked pages `$38-$3D`).
+
+The Whitestar boot self-test sums **every CPU-ROM byte into an 8-bit accumulator**
+and requires the total to be `0xFF`; alternatively, if the word at `$FFEE` is
+`0xFFFF` the test is skipped. So:
+
+- **Real checksum** (default): make `(sum of all bytes) & 0xFF == 0xFF`. `build.py`
+  absorbs the patch's effect into one unused `0xFF` padding byte (chosen below
+  `$FFEC`, clear of the checksum word / delta slot / 6809 vectors). No-op if the
+  sum is already correct.
+- **Disabled** (`--disable-checksum`): writes `0xFFFF` at `$FFEE`.
+
+(Whitestar uses a single 8-bit byte-sum target — there is no WPC-style delta word.
+`rom.py info`'s WPC-model checksum/version line is not meaningful for Whitestar.)
 
 ## Parameters
 
