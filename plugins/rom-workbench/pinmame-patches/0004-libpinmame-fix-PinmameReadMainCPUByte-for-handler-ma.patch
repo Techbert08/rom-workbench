@@ -1,8 +1,8 @@
-From 7e7e4d46dab0a3a699ab24f494c3c68bf5095385 Mon Sep 17 00:00:00 2001
-From: rom-workbench <noreply@anthropic.com>
-Date: Sun, 7 Jun 2026 19:27:02 -0400
-Subject: [PATCH] libpinmame: fix PinmameReadMainCPUByte for handler-mapped RAM
- (Whitestar)
+From e783ff0a0a330ccc360ade96829f87088199da0c Mon Sep 17 00:00:00 2001
+From: Zach Clifford <zach@2pir.ai>
+Date: Thu, 11 Jun 2026 17:01:53 -0400
+Subject: [PATCH 1/2] libpinmame: fix PinmameReadMainCPUByte for handler-mapped
+ RAM (Whitestar)
 
 memory_get_read_ptr() only resolves directly-mapped RAM/ROM banks and
 returns NULL for addresses served by a function handler. Sega/Stern
@@ -12,7 +12,7 @@ live RAM inspection / RAM diffs in the debugger on that platform (WPC was
 unaffected since its RAM is a direct bank). Fall back to cpunum_read_byte,
 which routes through the CPU's full address map.
 
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 ---
  src/libpinmame/libpinmame.cpp | 15 ++++++++++++---
  1 file changed, 12 insertions(+), 3 deletions(-)
@@ -47,5 +47,5 @@ index 66ae615a..d4af514a 100644
  }
  
 -- 
-2.52.0.windows.1
+2.49.0
 

@@ -13,7 +13,7 @@ persisted off-machine and the bundle can rebuild itself.
 - Base commit the patches apply onto: **`3ef424b0a560b08b563a345d1ecd0fa733533eef`**
   (on `origin/master`)
 - Exported from the maintainer's local `switch-recorder` branch
-  (HEAD `e6dc2fa1`) via `git format-patch origin/master..switch-recorder`.
+  (HEAD `d47a18ce`) via `git format-patch origin/master..switch-recorder`.
 
 ## The patches
 
@@ -22,6 +22,8 @@ persisted off-machine and the bundle can rebuild itself.
 | 0001 | Add event-driven debugger: m6809 hooks + PinmameDebug* API + CMakeLists | the `PinmameDebug*` API + m6809 dispatch-loop / RM/WM hooks; `CMakeLists_libpinmame.txt` for `cmake -S .` builds |
 | 0002 | Event-driven switch recorder at `vp_putSwitch` | the `VPINMAME_SWITCHLOG` recorder (the replayable switch-edge stream) |
 | 0003 | Cross-thread emulation-clock + fence-reached query | `PinmameGetEmulationTime` / `PinmameTimeFenceReached` (closed-loop replay pacing) |
+| 0004 | Fix PinmameReadMainCPUByte for handler-mapped RAM (Whitestar) | `memory_get_read_ptr` returns NULL for handler-served addresses; fall back to `cpunum_read_byte`. Fixes RAM reads for Sega/Stern Whitestar (se.c maps 0x0000–0x1FFF via `ram_r` handler). |
+| 0005 | Add PinmameWriteMainCPUByte export | Mirror of the read function via `cpunum_write_byte`; lets the replay-host policy poke live RAM bytes (e.g. forcing Whitestar mode flags). |
 
 Touched files: `src/libpinmame/libpinmame.{cpp,h}`, `src/cpu/m6809/m6809.c`,
 `src/cpuexec.c`, `src/wpc/vpintf.{c,h}`, `src/win32com/Alias.cpp`,

@@ -1,0 +1,56 @@
+From d47a18ce758f33fab90ae88526b8fbab15969ca5 Mon Sep 17 00:00:00 2001
+From: Zach Clifford <zach@2pir.ai>
+Date: Thu, 11 Jun 2026 17:02:11 -0400
+Subject: [PATCH 2/2] libpinmame: add PinmameWriteMainCPUByte export
+
+Mirror of PinmameReadMainCPUByte: writes a byte to the main CPU address
+map via cpunum_write_byte. Used by the replay-host policy ctx.write_ram()
+to poke live RAM during a session (e.g. forcing Whitestar mode flags).
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ src/libpinmame/libpinmame.cpp | 15 +++++++++++++++
+ src/libpinmame/libpinmame.h   |  1 +
+ 2 files changed, 16 insertions(+)
+
+diff --git a/src/libpinmame/libpinmame.cpp b/src/libpinmame/libpinmame.cpp
+index d4af514a..b52b52ee 100644
+--- a/src/libpinmame/libpinmame.cpp
++++ b/src/libpinmame/libpinmame.cpp
+@@ -1541,6 +1541,21 @@ PINMAMEAPI int PinmameReadMainCPUByte(const uint32_t address, uint8_t* const p_v
+ 	return 1;
+ }
+ 
++/******************************************************
++ * PinmameWriteMainCPUByte
++ ******************************************************/
++
++PINMAMEAPI int PinmameWriteMainCPUByte(const uint32_t address, const uint8_t value)
++{
++	if (!_isRunning)
++	{
++		return 0;
++	}
++
++	cpunum_write_byte(0, address, value);
++	return 1;
++}
++
+ /******************************************************
+  * Debugger: event-driven breakpoints, watchpoints, step
+  *
+diff --git a/src/libpinmame/libpinmame.h b/src/libpinmame/libpinmame.h
+index f1c9aed1..8e70d322 100644
+--- a/src/libpinmame/libpinmame.h
++++ b/src/libpinmame/libpinmame.h
+@@ -503,6 +503,7 @@ PINMAMEAPI int PinmameGetMaxNVRAM();
+ PINMAMEAPI int PinmameGetNVRAM(PinmameNVRAMState* const p_nvramStates);
+ PINMAMEAPI int PinmameGetChangedNVRAM(PinmameNVRAMState* const p_nvramStates);
+ PINMAMEAPI int PinmameReadMainCPUByte(uint32_t address, uint8_t* const p_value);
++PINMAMEAPI int PinmameWriteMainCPUByte(uint32_t address, uint8_t value);
+ 
+ /* --------------------------------------------------------------------------
+  * Debugger API
+-- 
+2.49.0
+
