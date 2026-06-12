@@ -64,6 +64,10 @@ touched. Two facts make this tractable:
 - **[debug]** — the reverse-engineering loop: static `rom.py` (6809 disassembly,
   xref/funcs, dump/search) coupled to the live CPU debugger (breakpoints,
   watchpoints, single-step). This is where you find *what to patch*.
+- **[ghidra]** — the debug skill's heavy artillery: headless Ghidra decompiles a
+  banked 6809 routine to C when `rom.py`'s linear sweep misaligns on inline data or
+  the routine is a dispatch-driven coroutine. Reach for it only when static + live
+  hit a wall (and after `setup` has installed Ghidra).
 - **[build]** — apply JSON patch specs, fix the checksum, produce
   `dist/<rom>_modded.zip`, then validate by replaying a session against it.
 
@@ -105,4 +109,5 @@ instead of `pulse(51)`.
 | play and capture gameplay, or replay/diff a session | `record` |
 | fabricate a precise, repeatable input sequence | `synthetic-record` |
 | find what code/bytes cause a behavior; trace a value | `debug` |
+| decompile a tangled/misaligned banked routine to C | `ghidra` |
 | apply a patch and produce a bootable modded ROM | `build` |

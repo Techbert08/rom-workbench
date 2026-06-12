@@ -322,6 +322,18 @@ meaning to interpret what the CPU is reading.)
 | "what writes this RAM byte (executed paths)" | `--watch-w` (A) |
 | "what's at this address / find this string" | `rom.py dump`/`search`/`strings` |
 | "what is switch N physically" | driver source → `.vbs` → empirical `--watch-w` |
+| "this routine is misaligned/coroutine — give me C" | `ghidra` skill (headless decompile) |
+
+## When to escalate to Ghidra
+
+`rom.py dis` linear-sweeps, so a table of **inline data** mid-routine misaligns every
+following instruction, and **dispatch-driven coroutine tasks** (0 xref, run via a scheduler
+`JMP ,X`) are painful to read as raw 6809. When you've confirmed the routine's address/page
+live but can't read its logic statically, load the **`ghidra`** skill: it recursive-descent
+decompiles a banked 6809 routine to C (it walks *around* inline data) via headless Ghidra.
+Find the address here (watchpoint/step), decompile it there, then come back live to resolve
+any `UNK_*` / unrecovered jump tables with real register context. Needs `setup` to have
+installed Ghidra (`GHIDRA_DIR`).
 
 ## Suggested investigation workflow
 

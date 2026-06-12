@@ -86,6 +86,19 @@ PINMAME_BASE_URL = f"https://github.com/vpinball/pinmame/releases/download/v{PIN
 # Base commit the switch-recorder patches apply onto (macOS source-build fallback).
 PINMAME_BASE_COMMIT = "3ef424b0a560b08b563a345d1ecd0fa733533eef"
 
+# Ghidra — the headless decompiler the `debug` skill's `ghidra` companion drives for
+# deep ROM reverse-engineering (recursive-descent disasm + C decompilation that beats
+# rom.py's linear sweep on banked 6809 code with inline data). Cross-platform Java app:
+# ONE zip for every OS; needs a JDK 21+ on PATH (JDK 25 verified working). Optional —
+# replay/record/build don't use it, so a failed download only disables the ghidra skill.
+GHIDRA_RELEASE = "12.1.2"
+GHIDRA_BUILD_TAG = "Ghidra_12.1.2_build"
+GHIDRA_ASSET = "ghidra_12.1.2_PUBLIC_20260605.zip"
+GHIDRA_BASE_URL = (
+    "https://github.com/NationalSecurityAgency/ghidra/releases/download/"
+    f"{GHIDRA_BUILD_TAG}"
+)
+
 # Console output (step/ok/warn/info/die and the ANSI plumbing) lives in
 # workbench_env so every entrypoint shares one implementation.
 
@@ -760,6 +773,62 @@ def _regsvr32(dll: Path, force: bool) -> None:
 
 
 # =============================================================================
+# Ghidra (cross-platform headless decompiler — optional, for the `ghidra` skill)
+# =============================================================================
+
+def _java_major() -> "int | None":
+    """Major version of the `java` on PATH (e.g. 25), or None if java is absent."""
+    java = shutil.which("java")
+    if not java:
+        return None
+    out = subprocess.run([java, "-version"], capture_output=True, text=True)
+    text = out.stderr or out.stdout  # `java -version` prints to stderr
+    import re
+    m = re.search(r'version "(\d+)', text)
+    return int(m.group(1)) if m else None
+
+
+def install_ghidra(root: Path, force: bool) -> "Path | None":
+    """Download + extract Ghidra under <root>/ghidra/. Returns GHIDRA_DIR — the
+    ghidra_X.Y.Z_PUBLIC directory that holds support/analyzeHeadless — or None if
+    unavailable. Ghidra is OPTIONAL: only the `ghidra` companion to the debug skill
+    uses it; replay/record/build are unaffected if this step is skipped."""
+    gdir = root / "ghidra"
+    step(f"Ghidra headless decompiler at {gdir}")
+
+    jv = _java_major()
+    if jv is None:
+        warn("No 'java' on PATH — Ghidra needs a JDK 21+ (JDK 25 verified). Install one "
+             "(e.g. Adoptium Temurin) before using the ghidra skill.")
+    elif jv < 21:
+        warn(f"java is {jv}; Ghidra needs JDK 21+. Install a newer JDK for the ghidra skill.")
+    else:
+        ok(f"java {jv} on PATH (Ghidra needs 21+).")
+
+    launcher_name = "analyzeHeadless.bat" if IS_WIN else "analyzeHeadless"
+    existing = next(iter(gdir.glob("ghidra_*_PUBLIC")), None)
+    if existing and (existing / "support" / launcher_name).exists() and not force:
+        ok(f"Ghidra present at {existing}; skipping.")
+        return existing
+
+    z = download(root, f"{GHIDRA_BASE_URL}/{GHIDRA_ASSET}", GHIDRA_ASSET, force=force)
+    if not z:
+        warn("Ghidra download failed; the ghidra skill will be unavailable "
+             "(replay/record/build are unaffected).")
+        return None
+    # The release zip holds a single top-level ghidra_X.Y.Z_PUBLIC/ dir; keep it
+    # (don't strip) so GHIDRA_DIR is that versioned dir.
+    extract_zip(z, gdir, strip=False)
+    inner = next(iter(gdir.glob("ghidra_*_PUBLIC")), None)
+    if not inner or not (inner / "support" / launcher_name).exists():
+        warn(f"Ghidra extraction did not produce ghidra_*_PUBLIC/support/{launcher_name} "
+             f"under {gdir}.")
+        return None
+    ok(f"Ghidra installed at {inner}")
+    return inner
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -816,6 +885,12 @@ def main() -> int:
             deploy_dylib_to_bundle(vpx_dir, pinmame_dir / "libpinmame.dylib")
             gatekeeper_check(vpx_dir)
 
+    # Ghidra is cross-platform (one Java zip for every OS) and optional — install it
+    # after the core toolchain so a failed download never blocks record/replay/build.
+    ghidra_dir = install_ghidra(root, args.force)
+    if ghidra_dir:
+        persist("GHIDRA_DIR", str(ghidra_dir))
+
     cfg_path = write_config(config) if config else None
 
     # --- Summary -------------------------------------------------------------
@@ -829,6 +904,8 @@ def main() -> int:
         print(f"  PINMAME_DIR   = {root / 'pinmame'}")
         print(f"  VPINMAME_DIR  = {root / 'vpinmame'}")
     print(f"  venv python   = {venv_python(root)}")
+    if ghidra_dir:
+        print(f"  GHIDRA_DIR    = {ghidra_dir}")
     if cfg_path:
         print(f"  config        = {cfg_path}")
     print()

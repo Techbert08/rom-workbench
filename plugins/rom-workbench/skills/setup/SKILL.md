@@ -34,6 +34,13 @@ The small `config.env` pointer file stays at the **stable** app-data location
 regardless, so every tool can find it (and, through it, the data dir + venv)
 without an environment variable to bootstrap.
 
+**Ghidra** (the headless decompiler the `ghidra` companion to the `debug` skill
+drives) also installs here, into `<root>/ghidra/ghidra_X.Y.Z_PUBLIC/`, exported as
+`GHIDRA_DIR`. It's cross-platform — one Java zip for every OS — and **optional**:
+only deep decompilation uses it, so a failed/declined download leaves
+record/replay/build fully working. It needs a **JDK 21+** on `PATH` (JDK 25 is
+verified); setup only warns if Java is missing, it doesn't install a JDK.
+
 ### Windows
 
 | Component | Where | Env var |
@@ -43,6 +50,7 @@ without an environment variable to bootstrap.
 | VPinMAME COM (regsvr32-registered) | `<root>\vpinmame` | `VPINMAME_DIR` |
 | Python venv + Pillow (for the DMD-render tools) | `<root>\venv` | — |
 | Patched VPinMAME64.dll | deployed over the installed VPinMAME | — |
+| Ghidra (headless decompiler — optional) | `<root>\ghidra\ghidra_*_PUBLIC` | `GHIDRA_DIR` |
 
 No PinMAME standalone is downloaded: replay loads only the self-contained
 `libpinmame.dll`, which ships prebuilt in `bin/`. VPinMAME is still installed —
@@ -96,7 +104,8 @@ Steps:
 3. **Patched libpinmame** — deploy the prebuilt patched library from `bin/` into `<root>/pinmame/` (replay loads it via ctypes; it's self-contained, so nothing is downloaded).
    - **macOS** — install `libpinmame.dylib` (prefer the arch-matched prebuilt in `bin/`; otherwise build from `--pinmame-src`, default `../pinmame` beside the repo). Also deploy it into the VPX bundle, ad-hoc re-sign, and run a Gatekeeper trial-launch.
    - **Windows** — copy `lib/libpinmame.dll` into `<root>/pinmame/`. Then download VPinMAME COM into `<root>/vpinmame/` (for `bass64.dll` + the layout), deploy the patched `VPinMAME64.dll`, and `regsvr32`-register it so VPX's COM `VPinMAME.Controller` loads **our** patched build (the switch recorder `record.py` depends on). Registration is forced when a *different* VPinMAME DLL currently owns the COM server — a common cause of "recording produced no switches" — and skipped only when ours is already registered. Needs Administrator once; the script triggers a UAC prompt and waits, printing the exact manual relaunch command if elevation is declined.
-4. **Persist the install dirs** — `VPINBALL_DIR`, `PINMAME_DIR`, and (Windows) `VPINMAME_DIR` — two ways:
+4. **Ghidra (optional, cross-platform)** — download + extract the pinned Ghidra release into `<root>/ghidra/` (kept as the versioned `ghidra_X.Y.Z_PUBLIC/` dir, exported as `GHIDRA_DIR`); warn if no JDK 21+ is on `PATH`. Skipped gracefully on download failure — only the `ghidra` skill needs it. The pin lives in the `GHIDRA_*` constants near the top of `setup-pinball.py`; bump them to update.
+5. **Persist the install dirs** — `VPINBALL_DIR`, `PINMAME_DIR`, (Windows) `VPINMAME_DIR`, and (if installed) `GHIDRA_DIR` — two ways:
    - As user-scope env vars, for interactive shells: macOS/Linux write `~/.zshenv` and `~/.bash_profile`; Windows writes the user environment (HKCU).
    - Into `config.env` at the **stable** platform-default app-data dir (`%LOCALAPPDATA%\rom-workbench\config.env`, `~/Library/Application Support/rom-workbench/config.env`, or `$XDG_DATA_HOME/rom-workbench/config.env`) — note this stays at the app-data location even though the artifacts now live under `${CLAUDE_PLUGIN_DATA}`. The file also records `CLAUDE_PLUGIN_DATA` itself, which is how each tool locates the venv to re-exec into (that variable is *not* in the ambient shell the tools are launched from). Every entrypoint calls `workbench_env.load_config()` at startup to read it, so the toolchain works in a fresh shell that never inherited the user env vars — no "open a new terminal" step. An explicit shell export still wins over the file.
 
@@ -364,6 +373,7 @@ ${CLAUDE_PLUGIN_DATA}/           # written by setup; survives plugin updates
 ├── vpinball/                    # Visual Pinball X         → VPINBALL_DIR
 ├── pinmame/                     # patched libpinmame       → PINMAME_DIR
 ├── vpinmame/                    # VPinMAME COM (Windows)   → VPINMAME_DIR
+├── ghidra/ghidra_*_PUBLIC/      # headless decompiler (optional) → GHIDRA_DIR
 └── cache/                       # downloaded archives (trust-on-first-use SHA-256)
 ```
 
