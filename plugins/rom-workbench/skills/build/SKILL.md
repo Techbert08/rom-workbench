@@ -96,24 +96,25 @@ Address formats (same as `rom.py`):
 
 ## WPC checksum
 
-WPC startup walks the ROM byte-by-byte adding into a 16-bit wrapping accumulator, EXCEPT the two bytes at `$FFEC`/`$FFED` are read as a single big-endian 16-bit "delta" word and that value is added (in place of summing the two bytes individually). The total must equal the word stored at `$FFEE`.
+The WPC boot self-test sums **every byte of the game ROM** into a 16-bit wrapping accumulator and requires the total to equal the word stored big-endian at `$FFEE`. The two bytes at `$FFEC`/`$FFED` are an ordinary-valued **correction knob** — summed as plain bytes, combined range `0..510` — *not* a 16-bit "delta word". A mismatch shows as **`G11 CHECKSUM ERROR`** in the operator test report (G11 = the CPU/game ROM chip).
+
+> **Verified against the factory ROM as oracle:** `sum(all 512 KiB of cg_g11.2_1) == 0x2121 == word @ $FFEE`, with `$FFEC/$FFED = 8D DE` counted as the plain bytes `0x8D + 0xDE = 363`. (An earlier model here zeroed `$FFEC/$FFED` and added them back as a big-endian *word* — over-counting the correction by up to `~0x8C73` and shipping ROMs that passed the build self-check but failed the real test with a G11 error. Fixed 2026-06-13.)
 
 `build.py` recalculates this automatically after applying patches. Two modes:
 
 **Real checksum** (default):
 
-Rule: `S_excl_delta + delta_word ≡ checksum_word_at_$FFEE  (mod 65536)`, where `S_excl_delta` is the sum of all ROM bytes with `$FFEC`/`$FFED` treated as zero, and `delta_word = ($FFEC << 8) | $FFED`.
+Rule: `sum(all bytes) ≡ ($FFEE << 8) | $FFEF  (mod 65536)`. With correction bytes `c0=$FFEC`, `c1=$FFED` and `B` = the sum of all bytes *except* the four at `$FFEC..$FFEF`, the `$FFEF` low byte cancels and this reduces to `c0 + c1 ≡ 255*$FFEE - B (mod 65536)`.
 
-1. Read target `C` = current checksum word at `$FFEE` (changes only if a patch modifies it).
-2. Zero `$FFEC`–`$FFED` in a working copy and compute `S_excl_delta`.
-3. `delta_word = (C - S_excl_delta) mod 65536`.
-4. Write `delta_word` as a big-endian word at `$FFEC`–`$FFED`.
-5. Verify under the same model: `S_excl_delta + delta_word ≡ C (mod 65536)`.
+1. Compute `B` (all four checksum-field bytes treated as zero).
+2. Keep the checksum word at its current value if the needed correction `(255*$FFEE - B) mod 65536` fits the `0..510` two-byte range; set `$FFEC/$FFED` to split it.
+3. Otherwise **float** the `$FFEE` high byte to the nearest value that admits a valid 2-byte correction (preserving `$FFEF`), then set `$FFEC/$FFED`. The build logs `word floated 0xAAAA -> 0xBBBB` when it does this.
+4. Verify directly: `sum(all bytes) == ($FFEE << 8) | $FFEF`.
 
-There is no byte-sum cap; any single 16-bit value is a valid delta, so any patch — including one that changes `$FFEE` itself — can be balanced without compensating padding bytes.
+The correction field is only 510 wide, so a patch that perturbs the byte-sum by more than that (e.g. filling `0xFF` free-space with opcodes) **will** float the checksum word. That is harmless — `$FFEE` is an internal consistency value, not the displayed game version (that's `$FFBE/$FFBF`). Floating it changes the value shown on the test-report checksum audit but the audit still reads **GOOD** because it stays self-consistent.
 
 **Disabled** (`--disable-checksum`):
-- Writes `0x00FF` at `$FFEC`. The WPC startup code sees `delta == 0xFF` and skips verification entirely. Safe for development builds; should be replaced with a real checksum before distribution.
+- Writes `0x00FF` at `$FFEC` to skip verification during development. (Skip-sentinel behavior under the byte-sum model is unverified — prefer a real checksum for anything you boot in VP/hardware; rebuild without the flag before distribution.)
 
 ## Sega/Stern Whitestar checksum
 
@@ -176,8 +177,11 @@ and requires the total to be `0xFF`; alternatively, if the word at `$FFEE` is
 ## Congo-specific notes
 
 - Factory ROM: `orig/congo_21.zip` (game ROM `cg_g11.2_1`, 512 KiB)
-- Checksum word `$FFEE` = 0x2121, delta `$FFEC` = 0x8DDE — **enforced**. This is
-  only the checksum target; it is not the displayed version.
+- Checksum word `$FFEE` = 0x2121 (== `sum(all bytes)`); correction bytes
+  `$FFEC/$FFED` = 8D DE (summed as plain bytes = 363) — **enforced**. This is
+  only the checksum target; it is not the displayed version. The current modded
+  build floats the word to 0x1621 (its free-space helper drops the byte-sum past
+  the 510-wide correction range).
 - Displayed version = two ROM bytes `$FFBE` (major, 0x02) / `$FFBF` (minor, 0x10),
   loaded by `$42AE@p3A` and rendered by format engine `$4037@p39`. "2.1→2.2" =
   patch `$FFBF` 0x10→0x20. See `notes/congo-version-display.md`.

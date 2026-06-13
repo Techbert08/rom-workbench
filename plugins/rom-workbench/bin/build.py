@@ -127,42 +127,73 @@ def parse_hex(hex_str: str) -> bytes:
 # WPC checksum
 # =============================================================================
 #
-# WPC startup walks the ROM byte-by-byte adding into a 16-bit wrapping
-# accumulator, EXCEPT the two bytes at $FFEC/$FFED are read as a big-endian
-# 16-bit "delta" word and that single value is added (in place of summing the
-# two bytes individually). The total must equal the word stored at $FFEE.
+# Verified empirically against the factory ROM as oracle (Congo cg_g11.2_1):
+# the WPC boot self-test sums EVERY byte of the game ROM into a 16-bit wrapping
+# accumulator and requires the total to equal the word stored big-endian at
+# $FFEE. The factory image satisfies this exactly: sum(all 512 KiB) == 0x2121
+# == the word at $FFEE. The two bytes at $FFEC/$FFED are an ordinary-valued
+# correction KNOB summed as plain bytes (combined range 0..510) — NOT a 16-bit
+# "delta word". (An earlier model here zeroed $FFEC/$FFED and added them back as
+# a big-endian word; that over-counts the correction by up to ~0x8C73 and made
+# patched ROMs fail the real test with a "G11 CHECKSUM ERROR" even though the
+# build self-check passed. Fixed 2026-06-13.)
 #
-# So if S = sum-of-all-bytes-with-FFEC-FFED-zeroed and C = the word at $FFEE,
-# the delta we need to write is just (C - S) mod 65536. There is no byte-sum
-# cap, so any single 16-bit value works and any patch can be balanced.
+# Constraint, with c0=$FFEC, c1=$FFED and checksum word = ($FFEE<<8)|$FFEF:
+#       sum(all bytes) == ($FFEE<<8)|$FFEF        (mod 65536)
+# Let B = sum of all bytes EXCEPT the four at $FFEC..$FFEF. The low byte $FFEF
+# cancels out of the congruence, leaving:
+#       c0 + c1 == 255*$FFEE - B                  (mod 65536)
+# We keep the checksum word at its current value when the needed correction
+# fits the 0..510 two-byte range; otherwise we float the $FFEE high byte to the
+# nearest value that admits a valid 2-byte correction (preserving the $FFEF low
+# byte). This is always solvable: consecutive $FFEE high bytes shift the RHS by
+# 255 and the 2-byte field spans 510, so some high byte always lands in range.
 
 def update_checksum(rom: bytearray) -> None:
     sys_base = len(rom) - SYS_SIZE
-    delta_off = sys_base + (0xFFEC - 0x8000)
-    cksum_off = sys_base + (0xFFEE - 0x8000)
+    o_c0 = sys_base + (0xFFEC - 0x8000)
+    o_c1 = o_c0 + 1
+    o_h = sys_base + (0xFFEE - 0x8000)
+    o_l = o_h + 1
 
-    target = (rom[cksum_off] << 8) | rom[cksum_off + 1]
+    h_cur = rom[o_h]
+    l_keep = rom[o_l]
 
-    # Sum-of-all-bytes with the delta bytes treated as zero.
-    rom[delta_off] = 0
-    rom[delta_off + 1] = 0
-    s_excl_delta = sum(rom) & 0xFFFF
+    # B = sum of all bytes with the four checksum-field bytes treated as zero.
+    rom[o_c0] = rom[o_c1] = 0
+    rom[o_h] = rom[o_l] = 0
+    b = sum(rom) & 0xFFFF
 
-    # Delta as a 16-bit big-endian word; no overflow possible after the mod.
-    needed = (target - s_excl_delta) & 0xFFFF
-    d_hi = (needed >> 8) & 0xFF
-    d_lo = needed & 0xFF
-    rom[delta_off] = d_hi
-    rom[delta_off + 1] = d_lo
+    # Pick the checksum high byte nearest the current one that admits a valid
+    # 2-byte correction (0..510). Preference for h_cur keeps $FFEE stable for
+    # small patches; large patches (e.g. filling 0xFF free-space with code) make
+    # the word float, which is harmless — it's an internal consistency value.
+    best = None  # (distance, h, need_c)
+    for h in range(256):
+        need_c = (255 * h - b) & 0xFFFF
+        if need_c <= 510:
+            dist = abs(h - h_cur)
+            if best is None or dist < best[0]:
+                best = (dist, h, need_c)
+    if best is None:  # unreachable given the 255-step / 510-span argument above
+        die("Checksum: no valid correction found (should be impossible).")
+    _, h, need_c = best
+    c0 = min(need_c, 255)
+    c1 = need_c - c0
 
-    # Verify under the actual model: byte-sum minus the two delta bytes, plus
-    # delta as a word.
+    rom[o_c0] = c0
+    rom[o_c1] = c1
+    rom[o_h] = h
+    rom[o_l] = l_keep
+
+    word = (h << 8) | l_keep
     verify = sum(rom) & 0xFFFF
-    verify = (verify - rom[delta_off] - rom[delta_off + 1]
-              + ((rom[delta_off] << 8) | rom[delta_off + 1])) & 0xFFFF
-    if verify != target:
-        die(f"Checksum verify failed: got 0x{verify:04X}, want 0x{target:04X}.")
-    ok(f"Checksum: delta=0x{d_hi:02X}{d_lo:02X}  target=0x{target:04X}  [OK]")
+    if verify != word:
+        die(f"Checksum verify failed: byte-sum 0x{verify:04X} != word 0x{word:04X}.")
+    floated = ("" if h == h_cur
+               else f"  (word floated 0x{(h_cur << 8) | l_keep:04X} -> 0x{word:04X})")
+    ok(f"Checksum: byte-sum == word 0x{word:04X}  "
+       f"corr $FFEC={c0:02X} $FFED={c1:02X}  [OK]{floated}")
 
 
 def disable_checksum(rom: bytearray) -> None:
