@@ -64,6 +64,39 @@ note it and decompile it separately.
 decompiler emits `in_DP * 0x100 + offset` noise for every `$00xx` access. The script does
 this for you.
 
+## The second thing that matters: the inline-argument calling convention
+
+The #1 cause of "Ghidra keeps misaligning" on these ROMs is **not** the bank map — it's an
+unmodeled calling convention. These games make far/cross-bank calls and spawn scheduler
+tasks through **trampoline** routines that read their arguments from **inline data bytes
+placed right after the call site**; execution resumes *after* those bytes. On LOTR:
+
+```
+  BD B3 E6        JSR  $B3E6           ; far-call trampoline
+  43 01 38        <inline hi,lo,bank>  ; NOT code — $B3E6 consumes these (verb $4301 @ p38)
+  35 02           PULS A               ; real code resumes HERE
+```
+
+Ghidra's recursive descent doesn't know `$B3E6` swallows 3 bytes, so it decodes `43 01 38`
+as instructions (`COMA` / `JMP <$38`) and derails the whole routine — the telltale
+`Could not recover jumptable` / `(*(code *)(... * 0x100 + 0x38))()` noise. **You fix this by
+declaring the trampoline and its inline-arg width** (`trampoline=` / `abi=`, below). The
+script then, for every call site, marks the inline bytes as data, overrides the call's
+fall-through to resume after them, re-disassembles, and annotates the decoded target as a
+comment in the C. It iterates to a fixpoint (one fix reveals more code → more call sites).
+
+To find a trampoline's inline-arg width, disassemble its body: an inline-arg trampoline
+reads its own return address off the stack and steps past the args — the signature is
+`LDX ,S` then `LDA ,X+` (/`LDB ,X+` …) then advancing the saved return (`LEAS`/`STX`).
+The count of `,X+` reads = the inline byte count. **Whitestar/LOTR confirmed set:**
+`$B3E6`=3 (far-call `hi,lo,bank`), `$A233`=4 (spawn `id,bank,pcHi,pcLo`), `$A242`=3
+(spawn, bank fixed `$3A`), `$A45E`=1 — all preset by `abi=whitestar`.
+
+**`PULS regs,PC` is also handled automatically.** On the 6809 that's the standard
+subroutine return, but Ghidra's model treats it as a computed jump (another bogus
+`UNRECOVERED_JUMPTABLE`). The script force-overrides every `PULS/PULU …,PC` to a RETURN, so
+functions close cleanly. No config needed.
+
 ## How to run it (the headless recipe)
 
 The reusable post-script `bin/ghidra_scripts/MapBankedRom.java` builds the map, pins DP,
@@ -73,20 +106,35 @@ labels known RAM, and decompiles the target addresses to `<out>/<ADDR>.c`. It re
 Windows. Write the config, then invoke `analyzeHeadless` with a throwaway project
 (`-deleteProject` keeps it clean and idempotent).
 
-Config file (`#` comments ok; `block`/`label`/`target` repeat):
+Config file (`#` comments ok, full-line **or** trailing; `block`/`label`/`target`/
+`trampoline` repeat):
 
 ```ini
 rom=<abs path to CPU ROM image on disk>      # e.g. orig/cpu/lotrcpua.a00 — the file, not the zip
 out=<abs dir for the decompiled .c files>
 dp=0                                          # direct-page value; omit / "none" to skip
+abi=whitestar                                 # preset: registers the Whitestar/LOTR trampolines
 block=RAM:0:none:2000                         # name:cpuHex:fileHex:sizeHex; file "none" => RAM
 block=page3A:4000:8000:4000                   # banked page at $4000 <- file 0x8000
 block=resident:8000:18000:8000                # resident bank at $8000 <- file 0x18000
 label=92F:dtrStarted                          # cpuHex:name -> readable C (not DAT_092f)
 label=8E2:offeredMode
+trampoline=B3E6:3:farcall                     # cpuHex:nInlineBytes[:fmt] — see below (abi= sets these)
+follow=1                                       # also decompile called helpers to this depth (default 0)
 target=705C                                   # each: recursive disasm + CreateFunction + decompile
 target=7A0A
 ```
+
+- **`abi=whitestar`** — registers the confirmed LOTR/Whitestar inline-arg trampolines
+  (`B3E6`/`A233`/`A242`/`A45E`) and a `bankShadow` label. Use this for LOTR; add per-game
+  `trampoline=` lines for others.
+- **`trampoline=cpuHex:nInlineBytes[:fmt]`** — declare one inline-arg trampoline. `fmt`
+  decodes the bytes into the annotation comment: `farcall` (`hi,lo,bank` → `far-call $hilo @
+  p<bank>`), `spawn4` (`id,bank,hi,lo`), `spawn3` (`id,hi,lo`), or `raw` (hex dump, default).
+- **`follow=<depth>`** — after fixing trampolines, also decompile every helper called (to
+  this call-graph depth) into its own `<ADDR>.c`, so call sites read `FUN_xxxx()` with real
+  bodies instead of `UNK_xxxx` stubs. Direct calls are always same-page or resident (cross-
+  page goes via a trampoline), so following them is safe. Default 0 (targets only).
 
 ```bash
 # POSIX (.bat on Windows). $GHIDRA_DIR + the plugin dir from setup.
@@ -118,21 +166,34 @@ The high-yield loop that cracked the LOTR Destroy-the-Ring start (notes/36):
    routine address to decompile and the page it's on.
 2. **Ghidra**: decompile that address (+ helpers it calls) with the recipe above.
 3. **Live again**: confirm/branch — single-step (`--break-pc`, `--dbg-step-after`) through
-   the decompiled routine with real register/RAM context to resolve anything the decompiler
-   left as `UNK_*` / "Could not recover jumptable" / a SLEIGH decode gap.
+   the decompiled routine with real register/RAM context to resolve anything still left as
+   `UNK_*` / a genuine indirect dispatch / a SLEIGH decode gap. (A *new* mid-routine
+   `Could not recover jumptable` usually means an inline-arg trampoline you haven't declared
+   yet — add it to the config rather than chasing it live.)
 
 Label RAM you've already mapped (the `labels` arg) so the C is readable, and keep the
 worked `.c` outputs with the notes — they're cheap to regenerate but valuable to diff.
 
 ## Gotchas
 
+- **`Could not recover jumptable` / `(*(code *)(... * 0x100 + 0x38))()` mid-routine** = an
+  inline-arg trampoline you haven't declared. The bytes after the call are args, not code.
+  Identify the trampoline and add `trampoline=ADDR:N` (or `abi=whitestar`). This was *the*
+  misalignment cause; once declared the script fixes every call site automatically.
+- **`UNRECOVERED_JUMPTABLE` at a `PULS …,PC`** is fixed automatically (forced to RETURN). If
+  you still see one, it's a genuine computed jump (effect dispatcher / real jump table) —
+  resolve the target live.
 - **"Unable to resolve constructor at $X"** = the 6809 SLEIGH couldn't decode the bytes at
-  `$X` — either a rare/unsupported opcode or genuine inline data. The decompiler truncates
-  the block there. Check `rom.py dis $X` and the live trace; if it's inline data, the real
-  control flow branches around it (don't trust the linear bytes).
-- **`(*(code *)((ushort)bVar * 0x100 + 0x38))()`** and friends = an indirect/computed call
-  the decompiler couldn't resolve (effect dispatcher, jump table). Resolve the target live.
+  `$X` — a rare/undocumented opcode (e.g. `$01`/`$5B`/`$6B`) or a data table mis-entered as
+  code. The decompiler truncates there. Cross-check `rom.py dis $X` + the live trace; if it's
+  data, the real control flow branches around it. This is a per-site oddity, not a
+  systematic break — the surrounding function still decompiles.
 - **Cross-bank calls** into another banked page are wrong in a single-page map — map the
-  needed page (change the `page3A` block's file offset) and re-run.
+  needed page (change the `page3A` block's file offset) and re-run. (Direct JSRs are always
+  same-page/resident; cross-page always goes through the trampoline ABI.)
+- **One `analyzeHeadless` at a time.** The JVM can still hold the project lock when the next
+  run starts, so a back-to-back loop fails silently (no fixes, stale output). Give each run
+  its **own project-location dir** (`/tmp/gp_a`, `/tmp/gp_b`, …) or wait between runs; kill
+  any stray `java` first.
 - One zip, every OS: Ghidra is Java. The only platform difference is the launcher name
   (`analyzeHeadless` vs `.bat`).
