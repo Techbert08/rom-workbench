@@ -251,8 +251,9 @@ public class MapBankedRom extends GhidraScript {
             addTramp("A233:4:spawn4");   // task spawn: FCB id,bank,pcHi,pcLo
             addTramp("A242:3:spawn3");   // task spawn (bank fixed $3A): FCB id,pcHi,pcLo
             addTramp("A45E:1:raw");      // 1-byte inline arg ($A45E: LDX,S / LDA,X+ / LEAS 2,S)
+            addTramp("9EF6:2:ptr");      // inline 2-byte pointer ($9EF6: LDX [3,S] then LEAX 2 / STX 3,S)
             labels.add("243:bankShadow");
-            println("abi=whitestar: registered B3E6/A233/A242/A45E + bankShadow label");
+            println("abi=whitestar: registered B3E6/A233/A242/A45E/9EF6 + bankShadow label");
         } else {
             println("unknown abi preset: " + name);
         }
@@ -369,6 +370,9 @@ public class MapBankedRom extends GhidraScript {
             case "spawn3":
                 if (b.length >= 3) return String.format("spawn id=$%02X resumePC=$%02X%02X (bank fixed)",
                         b[0], b[1], b[2]);
+                break;
+            case "ptr":
+                if (b.length >= 2) return String.format("inline ptr $%02X%02X", b[0], b[1]);
                 break;
             default: break;
         }
