@@ -1,6 +1,6 @@
 ---
 name: synthetic-record
-description: Author a replayable Williams (WPC) pinball session by hand — no Visual Pinball, no physics — by emitting the switch-edge stream that drives the ROM into a chosen state, then replay it headlessly via record. Use to synthesize a deterministic test case (start a ball, spell a target bank, trigger and re-trigger a mode, force an edge case) when capturing it live would be tedious or non-reproducible.
+description: Author a replayable 6809 pinball session by hand — no Visual Pinball, no physics — by emitting the switch-edge stream that drives the ROM into a chosen state, then replay it headlessly via record. Use to synthesize a deterministic test case (start a ball, spell a target bank, trigger and re-trigger a mode, force an edge case) when capturing it live would be tedious or non-reproducible.
 ---
 
 # synthetic-record
@@ -67,41 +67,15 @@ harmless playfield switch (a jet bumper) across a window to reset that timer.
 Lay it down across the whole in-play span. Tune `every` below the ball-search
 timeout (7 s works for Congo; the real recording never idled longer than that).
 
-## Switch identity — a 3-layer workflow
+## Switch identity
 
-You need the right switch *numbers*. They come from three sources, in order of
-authority for the switch you care about:
-
-1. **The PinMAME driver source** — ROM ground truth for the switches the driver
-   models (start, trough, slings, jets, lanes, coin door): the game's
-   `src/wpc/*.c` in the PinMAME tree (for Congo, `prelim/congo.c`). **It does not
-   include most playfield targets** — the prelim sim doesn't model them.
-2. **The table VBScript** (`tables/<table>.vbs`) — maps physical playfield objects
-   to the switch numbers the ROM reads (`Controller.Switch(n)` /
-   `vpmTimer.PulseSw n`), so it covers the targets the driver omits, but its
-   human labels are sparse. The `setup` skill's per-game project setup extracts it
-   once; if it isn't there yet:
-
-   ```bash
-   VPinballX_GL --extractvbs tables/<table>.vpx     # macOS/Linux -> tables/<table>.vbs
-   VPinballX.exe -ExtractVBS tables\<table>.vpx      # Windows
-   ```
-
-   Then grep the `.vbs` for `Controller.Switch(` / `PulseSw` / `SolCallback(` to
-   read the wiring. (VBScripts are author-specific — see the `setup` skill's
-   "Building the switch + lamp atlases" guidance for how to read them and the
-   manual.)
-3. **Empirical, from a real recording** — the definitive answer to "which
-   switch *does* X". Replay a session that exercised the feature with a
-   `--watch-w` on the RAM the feature touches, and read the switch edge that
-   immediately precedes each effect. This is how the Congo TRAVI-COM/satellite
-   targets were pinned (replay with `--watch-w 0x068F`, the satellite counter;
-   the two scoring hits were preceded by sw52 and sw51).
-
-Record the numbers you pin into the working-dir atlases — `./names/<rom>.json`
-(switches; `schemas/names.schema.json`) and `./lamps/<rom>.json` (lamps;
-`schemas/lamps.schema.json`) — so future scenarios read `pulse("travi")` not
-`pulse(51)` and can sense lamps by name. The `setup` skill seeds these.
+You need the right switch *numbers*. The primary source is the project's
+`./names/<rom>.json` atlas, built from the operator manual during per-game setup (see
+`setup` skill). If a switch isn't there yet, grep the table VBScript
+(`tables/<table>.vbs`) for `Controller.Switch(N)` / `PulseSw N` to find the playfield
+object it connects to, then `--watch-w` on the RAM byte the feature touches to empirically
+confirm which switch number precedes the effect. Record new identities in the atlas so
+future sessions read `pulse("ring_scoop")` not `pulse(47)`.
 
 ## The builder API (`synth.py`)
 

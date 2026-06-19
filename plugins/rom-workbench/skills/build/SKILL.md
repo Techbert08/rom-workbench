@@ -174,19 +174,6 @@ and requires the total to be `0xFF`; alternatively, if the word at `$FFEE` is
 7. When satisfied: rebuild without --disable-checksum for a clean checksum
 ```
 
-## Congo-specific notes
-
-- Factory ROM: `orig/congo_21.zip` (game ROM `cg_g11.2_1`, 512 KiB)
-- Checksum word `$FFEE` = 0x2121 (== `sum(all bytes)`); correction bytes
-  `$FFEC/$FFED` = 8D DE (summed as plain bytes = 363) — **enforced**. This is
-  only the checksum target; it is not the displayed version. The current modded
-  build floats the word to 0x1621 (its free-space helper drops the byte-sum past
-  the 510-wide correction range).
-- Displayed version = two ROM bytes `$FFBE` (major, 0x02) / `$FFBF` (minor, 0x10),
-  loaded by `$42AE@p3A` and rendered by format engine `$4037@p39`. "2.1→2.2" =
-  patch `$FFBF` 0x10→0x20. See `notes/congo-version-display.md`.
-- Free space for new code: page $37 at `$7F80`+ (all 0xFF, ~128 bytes)
-
 ## File layout
 
 ```

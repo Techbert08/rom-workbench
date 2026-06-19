@@ -5,9 +5,9 @@ description: One-time installer for the WPC mod toolchain — Visual Pinball X +
 
 # setup
 
-> **Orientation:** if you haven't already, load `rom-workbench:overview` for the
-> end-to-end mod workflow (setup → record → synthesize → debug → build → test)
-> and where this step fits.
+> **Orientation:** load `rom-workbench:overview` for the end-to-end workflow.
+> Setup is step 1 — the emulator install and per-game atlas are the foundation
+> everything else builds on.
 
 One-time install. Once setup runs successfully, day-to-day work doesn't need this skill loaded — `debug` and `record` use the installed components directly.
 
@@ -34,12 +34,12 @@ The small `config.env` pointer file stays at the **stable** app-data location
 regardless, so every tool can find it (and, through it, the data dir + venv)
 without an environment variable to bootstrap.
 
-**Ghidra** (the headless decompiler the `ghidra` companion to the `debug` skill
-drives) also installs here, into `<root>/ghidra/ghidra_X.Y.Z_PUBLIC/`, exported as
-`GHIDRA_DIR`. It's cross-platform — one Java zip for every OS — and **optional**:
-only deep decompilation uses it, so a failed/declined download leaves
-record/replay/build fully working. It needs a **JDK 21+** on `PATH` (JDK 25 is
-verified); setup only warns if Java is missing, it doesn't install a JDK.
+**Ghidra** (the headless decompiler used by the `ghidra` skill for full-ROM
+decompilation) also installs here, into `<root>/ghidra/ghidra_X.Y.Z_PUBLIC/`,
+exported as `GHIDRA_DIR`. It's cross-platform — one Java zip for every OS. A
+failed/declined download leaves record/replay/build working, but the recommended
+workflow decompiles the full ROM early in every mod project. It needs a **JDK 21+**
+on `PATH` (JDK 25 verified); setup warns if Java is missing but doesn't install it.
 
 ### Windows
 

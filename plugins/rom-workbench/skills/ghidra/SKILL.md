@@ -1,34 +1,36 @@
 ---
 name: ghidra
-description: Decompile banked 6809 pinball ROM routines to C with headless Ghidra — the heavy artillery for the debug skill. Use when rom.py's linear-sweep disassembly misaligns on inline data, when a routine is a dispatch-driven coroutine task with no static xref, or when you need C-level control flow (a mode/scheduler/dispatch handler) that's too tangled to read as raw 6809. Pairs with the live debugger (replay.py) — find the routine/address there, decompile it here.
+description: Decompile banked 6809 pinball ROM routines (or the full ROM) to C with headless Ghidra — the primary logic exploration tool. Use for full-ROM decompilation at the start of a mod, or to read any mode handler / scheduler / dispatch gate as C. The inline-argument trampoline ABI (abi=whitestar) is the critical setting that makes decompilation correct; without it the output misaligns everywhere.
 ---
 
 # ghidra
 
-> **Orientation:** load `rom-workbench:debug` first. Ghidra is a *complement* to
-> `rom.py` (static) and `replay.py`/`dbg.py` (live), not a replacement. Reach for it
-> only when those two hit a wall; most RE never needs it.
+> **Orientation:** load `rom-workbench:overview` for the end-to-end workflow. Ghidra
+> is **step 2** — run it after building the switch/lamp atlas and before diving into
+> the live debugger. The decompile gives you a C-level map of the whole game; the live
+> debugger then confirms which branch fires and finds runtime RAM values.
 
-## When Ghidra earns its keep (and when it doesn't)
+## When to use Ghidra
 
-`rom.py dis` does a **linear sweep** — it decodes bytes in order, so a table of inline
-data mid-routine throws off every following instruction (`?02`, bogus `JMP <$38`, etc.).
-Ghidra does **recursive descent** — it follows branches/calls from an entry, so it walks
-*around* inline data and reconstructs the real basic blocks. That difference is the whole
-reason to use it. Reach for Ghidra when:
+`rom.py dis` does a **linear sweep** — it decodes bytes in order, so inline data
+mid-routine throws off every following instruction. Ghidra does **recursive descent** —
+it follows branches/calls from an entry, walks *around* inline data, and reconstructs real
+basic blocks. That difference is the whole reason to use it.
 
-- `rom.py dis` of a routine is visibly **misaligned** (illegal opcodes between sane ones,
-  `PULS` with no matching `PSHS`) — the classic banked-3A/3B inline-data breakage.
-- The routine is **dispatch-driven** (0 static xref — run via a scheduler `JMP ,X`, an
-  indirect `JSR [,X]`, or a task table) and you need to read its logic, not just step it.
-- You want **C-level** control flow for a mode handler / the scheduler / a sw-dispatch
-  gate — nested branches that are painful to trace by hand.
+**Use Ghidra:**
+- **Full-ROM decompile up front** (see recipe below). Before touching the live debugger,
+  decompile every ROM page + resident. The result is a C-level map of the entire game —
+  mode handlers, the scheduler, switch-dispatch gates, flag checks — that makes live
+  debugging targeted rather than exploratory.
+- When `rom.py dis` of a specific routine **misaligns** (illegal opcodes between sane
+  ones, `PULS` with no matching `PSHS`) — inline data mid-routine.
+- For **dispatch-driven** routines (0 static xref — run via a scheduler `JMP ,X` or a
+  task table) that you can't easily read as raw 6809.
 
 **Don't** use it for: a quick disasm of a clean routine (`rom.py dis` is faster), finding
 who calls an address (`rom.py xref`), or anything you can read off a live single-step.
-Ghidra's 6809 SLEIGH also has **occasional decode gaps** ("Unable to resolve constructor
-at $XXXX") on rare opcodes / genuine inline data — cross-check those spots against
-`rom.py` and the live debugger.
+Ghidra's 6809 SLEIGH has **occasional decode gaps** ("Unable to resolve constructor at
+$XXXX") on rare opcodes — cross-check those spots against `rom.py` and the live debugger.
 
 ## Prereqs
 
@@ -37,6 +39,66 @@ at $XXXX") on rare opcodes / genuine inline data — cross-check those spots aga
 - A **JDK 21+** on `PATH` (JDK 25 verified). Ghidra bundles nothing; setup only warns.
 - The CPU ROM as a file on disk (e.g. `orig/cpu/<rom>cpua.a00`). Headless reads the file
   directly — it does NOT use the ROM zip.
+
+## Full-ROM decompilation recipe
+
+To get a C-level map of the whole game before live debugging, run one Ghidra pass per
+ROM page plus one for the resident bank. A 128 KiB / 6-page game (e.g. Whitestar) needs
+7 runs; a 512 KiB / 30-page WPC game needs 31. Each run produces `.c` files under its
+own `out_*/` dir; together they cover ~90–95% of reachable code.
+
+**Step 1 — identify the page layout.** Use `rom.py` to find the file offset of each
+page, then write a config per page:
+
+```ini
+# tools/ghidra/game_p3A.cfg  (one per page; repeat for p38..p3D + resident)
+rom=<abs-path>/orig/cpu/<rom>cpua.a00
+out=<abs-path>/tools/ghidra/out_p3A
+dp=0
+abi=whitestar                          # or add per-game trampoline= lines
+block=page3A:4000:8000:4000            # CPU $4000–$7FFF ← file 0x8000
+block=resident:8000:18000:8000         # CPU $8000–$FFFF ← file 0x18000
+[label= lines for key RAM addresses — same across all configs]
+follow=4                               # decompile called helpers to depth 4
+[target= lines: all far-call + spawn targets that land in this page]
+```
+
+For the resident bank, omit the `block=page*` line and use only `block=resident`.
+Set `follow=8` for resident (the scheduler/main-loop is large).
+
+**Step 2 — seed every config with reachable targets.** Seeds are the entry points
+Ghidra decompiles; coverage gaps are usually un-seeded dispatch tables. For each page:
+- Add all far-call and spawn targets that resolve to this page (trace `$B3E6` / `$A233`
+  / `$A242` call sites in the resident config's output, or scan with `rom.py xref`).
+- For the resident config, add all interrupt vectors (`target=849E`, `target=849F`,
+  `target=A7C1`, `target=A7C2` on LOTR) plus any spawn target that lives in resident.
+- After a first pass, inspect the output for suspiciously large gaps (e.g. a 1 KiB range
+  with no `.c` file). Check those bytes with `rom.py dis` — if they look like real code,
+  add entry points as seeds and re-run.
+
+**Step 3 — run one at a time.** Each run needs its own project dir to avoid the JVM
+project-lock gotcha (see Gotchas). Give each a unique `/tmp/gp_*` path:
+
+```bash
+mkdir -p /tmp/gp_resident
+"$GHIDRA_DIR/support/analyzeHeadless" /tmp/gp_resident p \
+  -import orig/cpu/<rom>cpua.a00 -processor 6809:BE:16:default \
+  -scriptPath "$CLAUDE_PLUGIN_ROOT/bin/ghidra_scripts" \
+  -postScript MapBankedRom.java tools/ghidra/game_resident.cfg \
+  -deleteProject
+```
+
+**Step 4 — label shared RAM.** Put a common `label=` block in every config (the key
+game-state addresses — mode flags, lap counters, effect bitfields). With the same labels
+across all pages, function calls in `.c` files read `DAT_offeredMode` instead of
+`DAT_08e2`, making cross-page logic legible.
+
+**Using the output.** The `.c` files are the decompile. Search them (`grep -r 'offeredMode'
+tools/ghidra/out_*/`) to find every routine that reads or writes a state byte. Read the C
+for control flow, conditions, and what each bit means. Return to the live debugger only
+when you need to confirm a runtime value or see which branch fires on a specific event.
+
+---
 
 ## The one thing that matters: the banked memory map
 
@@ -157,22 +219,24 @@ Read the emitted `<out>/<ADDR>.c`. The language id is `6809:BE:16:default` (the 
 inside Ghidra's `MC6800` processor module — no third-party install). A worked LOTR config
 lives at `tools/ghidra/lotr_p3a.cfg` in that project.
 
-## Workflow: pair it with the live debugger
+## Workflow: decompile first, live debugger to confirm
 
-The high-yield loop that cracked the LOTR Destroy-the-Ring start (notes/36):
+The high-yield loop:
 
-1. **Live**: a write-watchpoint (`replay.py --watch-w 0xADDR --trace dbg`) catches the PC
-   that writes a state byte at the real event, plus the task pointer / stack — that's the
-   routine address to decompile and the page it's on.
-2. **Ghidra**: decompile that address (+ helpers it calls) with the recipe above.
-3. **Live again**: confirm/branch — single-step (`--break-pc`, `--dbg-step-after`) through
-   the decompiled routine with real register/RAM context to resolve anything still left as
-   `UNK_*` / a genuine indirect dispatch / a SLEIGH decode gap. (A *new* mid-routine
-   `Could not recover jumptable` usually means an inline-arg trampoline you haven't declared
-   yet — add it to the config rather than chasing it live.)
+1. **Decompile the full ROM** (recipe above) before any live debugging. Read the C to
+   find routines that access the state bytes or lamps you care about. This replaces most
+   of the "hunt blindly with watchpoints" phase.
+2. **Live (targeted)**: a write-watchpoint (`replay.py --watch-w 0xADDR --trace dbg`)
+   confirms which PC fires at the real event and gives you the page (the `loc` field).
+   Cross-reference with the decompile output for that address.
+3. **Live again to resolve residuals**: single-step (`--break-pc`, `--dbg-step-after`)
+   through the decompiled routine to resolve anything left as `UNK_*`, a genuine indirect
+   dispatch, or a SLEIGH decode gap. A mid-routine `Could not recover jumptable` usually
+   means an undeclared inline-arg trampoline — add `trampoline=ADDR:N` to the config
+   and re-run rather than chasing it live.
 
-Label RAM you've already mapped (the `labels` arg) so the C is readable, and keep the
-worked `.c` outputs with the notes — they're cheap to regenerate but valuable to diff.
+Label RAM you've already mapped (the `label=` lines) so the C is readable. Keep the
+`.c` outputs under `tools/ghidra/` — they're cheap to regenerate but valuable to diff.
 
 ## Gotchas
 

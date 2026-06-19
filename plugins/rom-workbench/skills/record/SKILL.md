@@ -1,6 +1,6 @@
 ---
 name: record
-description: Capture a Williams pinball gameplay session in Visual Pinball + VPinMAME, then replay it headlessly against a single ROM (factory or modded) from an explicit NVRAM snapshot, with selectable trace features — state events (lamps/solenoids/GIs), DMD frames, emulated game audio (PCM, muxable into the DMD video), and an event-driven CPU debugger (breakpoints, watchpoints, single-step) for the debug skill. Use to record gameplay, produce NVRAM snapshots, or replay a session against a ROM to inspect (or diff) the produced traces.
+description: Capture a 6809 pinball gameplay session in Visual Pinball + VPinMAME, then replay it headlessly against a single ROM (factory or modded) from an explicit NVRAM snapshot, with selectable trace features — state events (lamps/solenoids/GIs), DMD frames, emulated game audio (PCM, muxable into the DMD video), and an event-driven CPU debugger (breakpoints, watchpoints, single-step) for the debug skill. Use to record gameplay, produce NVRAM snapshots, or replay a session against a ROM to inspect (or diff) the produced traces.
 ---
 
 # record
@@ -171,11 +171,7 @@ carries:
 
 Gotcha: memory reads go through the *current* bank, so `@X` on a banked
 pointer only returns real bytes when that pointer's page is the one mapped at
-the break (e.g. read a page-3C string only while bank=0x3C).
-
-This is the reflex for *"what page is this / who called this / what does this
-pointer point at"* — it's what cracked the Congo POST version-display path
-(producer page `0x39`, renderer `$404F@p39`, output buffer `$0326`).
+the break.
 
 ### Architecture: PinMAME drives, the host listens
 

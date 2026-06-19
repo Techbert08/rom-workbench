@@ -1,16 +1,17 @@
 ---
 name: debug
-description: Reverse-engineer Williams Pinball Controller (WPC) ROMs — static + byte-level analysis with the bank-aware rom.py tool (6809 dis, recursive-descent xref/funcs, dump/search/strings) coupled to the live CPU debugger (replay.py --interactive + dbg.py — breakpoints, watchpoints, single-step, a frozen-CPU REPL). Use to disassemble a region, find who calls/references an address, trace where a register or RAM byte comes from, set a breakpoint and step, resolve a banked PC, verify patch bytes, or identify what a switch number physically is.
+description: Static + live analysis of banked 6809 pinball ROMs (WPC and Whitestar) — bank-aware rom.py (6809 dis, recursive-descent xref/funcs, dump/search/strings) coupled to the live CPU debugger (replay.py --interactive + dbg.py — breakpoints, watchpoints, single-step, frozen-CPU REPL). Use to disassemble a region, find who calls/references an address, trace where a RAM byte comes from, set a breakpoint, resolve a banked PC, or verify patch bytes. For C-level logic of whole routines, see the ghidra skill first.
 ---
 
 # debug
 
-> **Orientation:** if you haven't already, load `rom-workbench:overview` for the
-> end-to-end mod workflow (setup → record → synthesize → debug → build → test)
-> and where this step fits.
+> **Orientation:** load `rom-workbench:overview` for the end-to-end workflow. This
+> skill is for **targeted orientation** — confirming which code path fires, finding
+> what writes a RAM byte, stepping through a specific routine. For C-level logic of
+> mode handlers and schedulers, start with the `ghidra` skill's full-ROM decompile.
 
-Reverse-engineering a WPC ROM is one loop: **simulate → break/step → read the
-disassembly at the live PC**. Both halves ship here:
+Reverse-engineering a 6809 pinball ROM is: decompile → orient live → confirm. Both
+halves of the live side ship here:
 
 - **Static (`rom.py`)** — self-contained, stdlib-only, **bank-aware**: `dis`
   (from-scratch 6809 disassembly), `xref`/`funcs` (recursive-descent
@@ -32,10 +33,9 @@ the always-mapped system region; `$4000-$7FFF` is a 16 KB window into one of
 
 - "disassemble $XXXX@pYY" / "what's the code at this address?"
 - "who calls / references $XXXX?" / "where do functions start in page YY?"
-- "trace where this register / RAM byte comes from" / "what writes $XXXX?"
-- "set a breakpoint at $D9A6 and step it" / "hold the CPU and let me poke around"
+- "what writes $XXXX?" / "trace where this RAM byte comes from"
+- "set a breakpoint at $XXXX and step it" / "hold the CPU and let me poke around"
 - "this banked PC is ambiguous — which page is it?"
-- "what is switch N physically?" (interpret a live switch read / `PulseSw n`)
 - "dump the bytes at $FFEE" / "convert this address to a file offset" / "verify
   this patch byte before flipping it"
 
@@ -255,61 +255,26 @@ Formula: `file_offset(page, addr) = (page - firstPage) × 0x4000 + (addr - 0x400
 
 ## Resolving a *banked* return address (the page is on the stack, not in the routine)
 
-A return address in `$4000-$7FFF` recovered from the stack is **page-ambiguous**,
-and — the trap — its page is usually **not** the page of the routine you unwound
-it from. Cross-page calls go through a **bank-switch gate** (the `$8A04`/`$8A07`
-family, `$86FC`, …): a tiny system stub that sets `WPC_ROM_BANK` (`STA $3FFC`)
-and returns with `PULS CC,A,B,PC`. The gate's return frame holds **both** the
-caller PC **and** the caller's ROM bank as adjacent saved bytes — so when it
-pops PC it simultaneously restores the bank. To attribute the return address to
-a page, read that restored-bank byte; don't assume it shares the current page.
+A return address in `$4000-$7FFF` recovered from the stack is **page-ambiguous**.
+For WPC games, cross-page calls go through a **bank-switch gate** (`$8A04`/`$8A07`
+family): a tiny stub that sets `WPC_ROM_BANK` and returns with `PULS CC,A,B,PC`. The
+gate's return frame holds **both** the caller PC **and** the caller's ROM bank as
+adjacent saved bytes. To attribute a banked return address to its page: `dbg.py mem @s 16`
+at the callee entry, disassemble the gate to learn its `PULS` layout, and read the bank
+byte the gate restores — don't assume the return shares the current page.
 
-Recipe (worked example — the routine that loads Congo's version digits):
-1. At the callee entry (`--break-pc 0x4037`, A/B live), dump the gate frame:
-   `dbg.py mem @s 16`. Disassemble the gate (`rom.py dis '$8A07' 12`) to learn
-   its `PULS` layout, then map the frame bytes onto it.
-2. For `$8A07`'s `PULS CC,A,B,PC`: the pulled **PC** = caller return; the byte
-   the gate reloads into `$11`/`$3FFC` = caller **bank**. Here that gave caller
-   `$42C6` with bank `0x3A` → **`$42C6@p3A`**, *not* `@p39`.
-3. `rom.py funcs --page <bank>` to find the enclosing function, then `dis` it.
-
-(This is exactly the bug that left `notes/congo-version-display.md` chasing
-`$42C6@p39` — wrong page — for a whole session. Always read the gate's bank byte.)
-
----
+For Whitestar games, cross-page calls use the inline-argument trampoline ABI (`$B3E6`) —
+the bank is encoded at the call site, so the live `bank` read from the debugger already
+tells you the active page. See the `ghidra` skill for how the trampoline ABI works.
 
 ## What is switch N? (orienting on a live switch read)
 
-When a step or disassembly shows a switch read, or a table's VBScript shows
-`vpmTimer.PulseSw n`, you need to know what switch N physically *is*. Three
-sources, in order of authority for the switch you care about:
-
-1. **The PinMAME driver source** — ROM ground truth for the switches the driver
-   models (start, trough, slings, jets, lanes, coin door): the game's
-   `src/wpc/*.c` in the PinMAME tree (for Congo, `prelim/congo.c`). It does
-   **not** include most playfield targets — the prelim sim doesn't model them.
-2. **The table VBScript** (`tables/<table>.vbs`, extracted once by the `setup`
-   skill's per-game project setup) — maps physical playfield objects to the switch
-   numbers the ROM reads (`Controller.Switch(n)` / `vpmTimer.PulseSw n`), so it
-   covers the targets the driver omits. If it isn't extracted yet:
-
-   ```bash
-   VPinballX_GL --extractvbs tables/<table>.vpx     # macOS/Linux -> tables/<table>.vbs
-   VPinballX.exe -ExtractVBS tables\<table>.vpx      # Windows
-   ```
-
-   Then grep the `.vbs` for `Controller.Switch(` / `PulseSw` / `SolCallback(` to
-   read the wiring. Pre-pinned identities live in the `./names/<rom>.json` and
-   `./lamps/<rom>.json` atlases (seeded by `setup`) — check there first.
-3. **Empirical, from a real recording** — the definitive answer to "which switch
-   *does* X". Replay a session that exercised the feature with `--watch-w` on the
-   RAM the feature touches, and read the switch edge that immediately precedes
-   each effect (this is how the Congo TRAVI-COM/satellite targets were pinned:
-   `--watch-w 0x068F`, the two scoring hits preceded by sw52 and sw51).
-
-(This is the same recipe the `synthetic-record` skill uses to *author* sessions
-by switch name — there it's name→number to drive the ROM, here it's number→
-meaning to interpret what the CPU is reading.)
+The primary source is the switch/lamp atlas built from the operator manual during project
+setup (see `setup` skill). Check `./names/<rom>.json` first. If the switch isn't there
+yet: grep the table VBScript (`tables/<table>.vbs`) for `Controller.Switch(N)` /
+`PulseSw N` / `SolCallback(` to find the playfield object it connects to. For definitive
+confirmation, `--watch-w` on the RAM byte the feature touches and read the switch edge
+immediately before the write.
 
 ## Picking the tool
 
@@ -321,33 +286,31 @@ meaning to interpret what the CPU is reading.)
 | "disassemble this region" | `rom.py dis` (live `loc` → static) |
 | "what writes this RAM byte (executed paths)" | `--watch-w` (A) |
 | "what's at this address / find this string" | `rom.py dump`/`search`/`strings` |
-| "what is switch N physically" | driver source → `.vbs` → empirical `--watch-w` |
-| "this routine is misaligned/coroutine — give me C" | `ghidra` skill (headless decompile) |
+| "what is switch N physically" | atlas (`names/<rom>.json`) → `.vbs` → empirical `--watch-w` |
+| "read C-level logic of a mode/scheduler/handler" | `ghidra` skill full-ROM decompile |
 
-## When to escalate to Ghidra
+## When to use Ghidra alongside this skill
 
-`rom.py dis` linear-sweeps, so a table of **inline data** mid-routine misaligns every
-following instruction, and **dispatch-driven coroutine tasks** (0 xref, run via a scheduler
-`JMP ,X`) are painful to read as raw 6809. When you've confirmed the routine's address/page
-live but can't read its logic statically, load the **`ghidra`** skill: it recursive-descent
-decompiles a banked 6809 routine to C (it walks *around* inline data) via headless Ghidra.
-Find the address here (watchpoint/step), decompile it there, then come back live to resolve
-any `UNK_*` / unrecovered jump tables with real register context. Needs `setup` to have
-installed Ghidra (`GHIDRA_DIR`).
+`rom.py dis` linear-sweeps, so inline data mid-routine misaligns every following
+instruction. Dispatch-driven coroutine tasks (0 xref, run via `JMP ,X`) are painful to
+read as raw 6809. **The `ghidra` skill's full-ROM decompile (done up front) gives you C
+for all of this before you touch a watchpoint.** Use the live debugger here to orient —
+find the PC that writes a key RAM byte, read the active bank — then return to the
+decompile's `.c` file to understand the logic. Needs `setup` to have installed Ghidra.
 
 ## Suggested investigation workflow
 
 For "I observed behaviour X, where does it come from?":
 
-1. **Orient.** `rom.py strings`/`search` to find the hook (a format string, a
-   known constant). `rom.py xref` on it to find the code that references it.
-2. **Confirm dynamically.** Break at the candidate entry with the live debugger;
-   the trace/regs tell you which path actually fires and which page it's in.
-3. **Read it.** `rom.py dis '<loc>'` on the confirmed `loc` to see what the
-   routine does and where it loads its inputs.
-4. **Trace the source.** If a value comes from RAM, `--watch-w <addr>` finds
-   every writer; if from a register, follow it up the call chain (`@S:2` unwind).
-   `rom.py xref` finds the static callers to cross-check.
+1. **Read the decompile first.** `grep` the `tools/ghidra/out_*/` tree for the RAM byte
+   or lamp that changes during X. The C files show which routines read/write it and
+   under what conditions.
+2. **Orient live.** `--watch-w <addr>` on that RAM byte confirms which PC fires at the
+   real event and which ROM page it's in. Cross-reference the `loc` with the decompile.
+3. **Confirm dynamically.** Break at the candidate entry with the live debugger;
+   regs tell you which branch actually fires.
+4. **Trace the source.** If a value comes from a register, follow it up the call chain
+   (`@S:2` unwind). `rom.py xref` finds static callers to cross-check.
 5. **Verify patch location** with `rom.py dump`/`dis` before flipping bytes via
    the `build` skill.
 
@@ -370,16 +333,6 @@ For "I observed behaviour X, where does it come from?":
 - **Banked code requires `rom.py dis` + the live debugger.** WPC bank-switching
   means `$4000-$7FFF` overlays are page-specific; static tools that don't model
   this decode garbage. Always supply `@pPAGE` and confirm against the live debugger.
-
-## Why a custom debugger / why Python
-
-PinMAME is a MAME-0.76-era core; its built-in debugger is a legacy TUI, not
-scriptable. The whole path is a Python driver + the patched libpinmame DLL in
-one process; new observability is added by exporting from libpinmame (the
-patched `switch-recorder` source; prebuilt DLLs ship in `lib/`). The
-bank-resolution, `--dbg-mem`, and interactive session needed **no** new DLL
-exports — just the existing `PinmameDebug*` + `PinmameReadMainCPUByte`.
-Implementation: `bin/replay_host.py`.
 
 ## File layout
 
