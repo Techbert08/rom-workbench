@@ -1,0 +1,18 @@
+diff --git a/src/sparse-vector.h b/src/sparse-vector.h
+index 12dffa7..d5efba2 100644
+--- a/src/sparse-vector.h
++++ b/src/sparse-vector.h
+@@ -734,6 +734,13 @@ class SparseVector {
+     return data.find(elementId) != data.end();
+   }
+ 
++  // For useIndex=true vectors: write one element's data by frame id.
++  void setAtIndex(uint32_t elementId, const T *values, size_t size) {
++    if (elementId >= index.size()) index.resize(elementId + 1);
++    index[elementId].assign(values, values + size);
++    elementSize = size;
++  }
++
+   template <typename U = T>
+   void set(uint32_t elementId, const T *values, size_t size,
+            SparseVector<U> *parent = nullptr,

@@ -1,2 +1,5 @@
 __pycache__/
 *.pyc
+
+# colorization toolkit build output (rebuilt via serum/build.sh)
+plugins/rom-workbench/serum/build/

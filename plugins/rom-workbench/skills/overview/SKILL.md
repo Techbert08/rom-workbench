@@ -80,3 +80,13 @@ All per-mod work happens in one project directory:
 | play and capture gameplay; replay, live-debug, or diff runs | `record` |
 | fabricate a precise, repeatable input sequence | `synthetic-record` |
 | apply a patch and produce a bootable modded ROM | `build` |
+| port a PIN2DMD `.pac` colorization to a Serum `.cROMc` | `colorize` |
+| understand the PIN2DMD/Serum formats + trigger-hash internals | `colorize-formats` |
+
+## Colorization (a separate track)
+
+`colorize` / `colorize-formats` are a distinct capability from ROM modding: they
+translate a PIN2DMD `.pac` colorization into a libserum Serum `.cROMc` that
+VPinMAME/VPX can load. They reuse the `record` replay substrate (to capture the
+DMD frames that bridge PIN2DMD's plane-CRC triggers to libserum's per-pixel
+hashing) but don't touch the game ROM. Start at `colorize`.

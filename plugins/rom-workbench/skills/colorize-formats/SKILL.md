@@ -1,0 +1,144 @@
+---
+name: colorize-formats
+description: Reference for the PIN2DMD→Serum colorization internals — the .pac/.pal/.vni and Serum .cROMc binary formats, the reverse-engineered trigger-hash schemes (Replace = plane0 CRC; ColorMask/LayeredColorMask = masked plane0 CRC), why PIN2DMD's plane hashing can't be reproduced by libserum's per-pixel hashing (the bridge), the libserum version pin and API gotchas, and fallback techniques (silhouette/shape triggers) for hard-to-reach frames and animations. Load alongside `colorize` when implementing or debugging the converter.
+---
+
+# colorize-formats
+
+Hard-won internals behind the `colorize` skill. All CRC32 here is standard
+(`0xEDB88320`, init `0xffffffff`, final XOR) — `zlib.crc32` ≡ libserum
+`crc32_fast` bit-for-bit; PIN2DMD uses the same algorithm. The differences are
+all about *what bytes get hashed*.
+
+## File formats
+
+### PAC (encrypted container)
+`"PAC "` magic + version byte, then chunks: `int16 BE` type (1=PAL, 2=VNI),
+`int32 BE` encrypted byte count, data = AES-128-CBC (key = IV =
+`bytes.fromhex(vni.key)`) then gzip. `decrypt_pac.py` handles it.
+
+### PAL (big-endian) — palettes + trigger table + masks
+- `uint8` version; `uint16` num_palettes; each: index, num_colors, type, RGB×n.
+- `uint16` num_mappings; each: **`uint32` CRC32** (the trigger), `uint8`
+  switch_mode, `uint16` palette_idx, `uint32` VNI byte offset.
+- `uint8` num_masks; each 512 bytes = a 128×32 bit mask.
+- switch_mode: 0=Palette 1=Replace 2=ColorMask 3=Event 4=Follow
+  5=LayeredColorMask 6=FollowReplace 7=MaskedReplace. (LOTR mix: Replace 93,
+  ColorMask 148, LayeredColorMask 74, Follow 1.)
+
+### VNI (big-endian, magic `"VPIN"`, v5) — the colorized frames
+Offset table at byte 8 (`num_anims × uint32`). Each animation: name, 16 deprecated
+bytes, frame count, embedded palette (ignore — use PAL palette), w/h (128×32),
+per-anim masks, then frames. Each frame: `int16` plane_size, `uint16` delay,
+`uint32` hash (often 0/unused), `uint8` bit_depth(7), `uint8` compressed flag;
+data is 7 bit-planes, optionally heatshrink (window=10, lookahead=5).
+Pixel decode: 7 planes → 0–127. Bit 6 set ⇒ colorized (low 6 bits = palette
+index); bit 6 clear ⇒ passthrough (original shade preserved).
+**Plane bit order for display is MSB-first** (bit 7 = leftmost pixel): decoding
+LSB-first produces horizontally-mirrored frames — a real output bug if you ship
+it, since `cframes` drives the spatial colorized output.
+
+### Serum .cROMc (v7)
+`"CROM"` + `uint16 LE` version(7) + `uint32 LE` uncompressed size + zlib-deflated
+cereal `PortableBinaryArchive` of `SerumData`. Key V1 fields: `nocolors=4`
+(input DMD shades — wrong value → grayscale-fallback too-dark frames),
+`nccolors=64` (colorization palette — 0 makes `Serum_Load` return NULL),
+`hashcodes` (useIndex=true, write via `setAtIndex`), `cpal` (192 B/frame),
+`cframes` (4096 B/frame), `compmasks`/`compmaskID`/`shapecompmode`/`ncompmasks`
+for masked triggers. compmaskID default 255 = no mask; shapecompmode default 0.
+
+## The trigger-hash schemes (reverse-engineered empirically)
+
+PIN2DMD computes its PAL trigger CRC over a **bit-plane**, not the per-pixel frame:
+
+- **Replace / Follow (modes 1, 4):** `CRC32(plane0)` where plane0 = bit 0 of each
+  pixel, LSB-packed into 512 bytes. (Some frames key on plane1; try both.)
+- **ColorMask / LayeredColorMask (modes 2, 5):** `CRC32(plane0 AND mask)`,
+  keep-where-mask-bit-**set**, LSB packing. The mask's set bits are the *static*
+  region; the dynamic region (scores, etc.) is excluded so one trigger covers
+  every variation. Verified: dominant scheme, 0 mask-assignment ambiguity. Crack
+  it on a new game with `discover_masks.py` (it sweeps plane/polarity/packing).
+
+These were found by hashing real captured RAW frames every which way and seeing
+which scheme hit the PAL CRC set far above chance.
+
+## Why a bridge is mandatory (the core insight)
+
+libserum, at runtime, computes `crc32_fast(frame, fwidth*fheight)` over the
+**4096-byte per-pixel** live frame (or `calc_crc32` with a comp mask, still
+per-pixel, optionally shape-clamped) and matches it to the stored hashcode. It
+**never** hashes a bit-plane. So PIN2DMD's stored plane-CRC is in a different
+domain and can't be reproduced from the per-pixel frame — and CRC is one-way, so
+you can't invert the PAL CRC back to a frame either.
+
+**Bridge:** use the captured per-pixel frame `F` as the Rosetta stone. Compute
+F's plane-CRC (PIN2DMD domain) → look up the colorization in the PAL. Store the
+**libserum-domain** hash of that same F as the trigger:
+- unmasked: `crc32(F)` over all 4096 per-pixel bytes (mask=255, shape=0).
+- masked: `crc32` over F's per-pixel values where the Serum compmask is 0. The
+  Serum compmask is the **inverted** PAL mask (0 where the PAL bit is set,
+  because libserum hashes where compmask==0) so it hashes exactly the static
+  region. Same static content ⇒ same hash ⇒ one trigger fires across all dynamic
+  variants.
+
+Partial offline shortcut (correctly oriented VNI): with the MSB orientation fix,
+the VNI colorized frame's **plane0 reproduces the PAL trigger CRC for ~62/316
+LOTR mappings** (`pac2serum --selftest-vni` → mode1=54, mode2=8). So for those,
+VNI structure == original structure. This still does NOT directly yield a
+libserum hashcode for 4-shade frames (you'd need the full per-pixel values, i.e.
+plane1 too), but it's a strong prior for the silhouette/offline route below and
+worth revisiting for animations. (Before the orientation fix this test returned
+0 — a stale "VNI can't help" claim is wrong.) The display ROM still can't be
+statically scanned for raw planes (`scan_rom_planes.py` → 0; compressed,
+68000-decoded — `inspect_display_rom.py` confirms).
+
+## Fallback: silhouette / "shape" triggers (for hard-to-reach frames & animations)
+
+When a frame is hard to capture in gameplay (rare screens, or **animation frames
+2..N** that play on PIN2DMD's own timer with no per-frame ROM CRC), there's an
+offline option that needs **no replay or brute force**:
+
+libserum's **shape mode** (`shapecompmode=1`) hashes the lit/unlit *silhouette*
+(per-pixel value clamped `>1 → 1`), optionally within a comp mask. The silhouette
+is **directly readable from the VNI colorized frame** (lit = non-background),
+because the colorizer lights exactly the pixels the original lit. So you can emit
+a working shape-mode hashcode for *any* mapping straight from PAL+VNI:
+- Replace: `crc32_shape` over the whole frame's lit pattern.
+- ColorMask/LCM: `crc32_shape` over the **masked** static-region lit pattern
+  (whole-frame won't match — the live dynamic region differs from the VNI's).
+
+Tradeoff — **specificity**: silhouettes are coarser than exact frames, so
+similar-shaped screens collide and can mis-colorize. Measured on LOTR's 316
+mappings: 259 distinct whole-frame silhouettes, 81 frames in collisions; masking
+to the static region should reduce that. **Use it as a guarded supplement, not a
+replacement:** keep exact replay-derived triggers where you have them, add shape
+triggers only for silhouettes that are unique and don't collide with an exact
+trigger. (Brute-forcing the original plane0 from colorized color-groups is cheap
+— ~2^12/frame, 90.7% of frames consistent — but does NOT yield a usable hashcode,
+because reconstructing plane0 leaves plane1 unconstrained and libserum needs full
+per-pixel values; the silhouette route sidesteps this.)
+
+## libserum: version pin, API, validation
+
+- **Version pin:** VPX bundles libserum **2.6.0** built from PPUC/libserum (same
+  distinctive log strings). `pac2serum` pins PPUC tag v2.6.0 (commit `21b28325`)
+  via FetchContent + an additive `setAtIndex` patch, so the cereal layout matches
+  byte-for-byte. Build from source (not the .dylib — it exports only the C API,
+  not `SerumData::SaveToFile`).
+- **API gotcha:** `Serum_ColorizeWithMetadatav2(frame, bool sceneRequested)` —
+  output goes into the `Serum_Frame_Struc*` returned by `Serum_Load`, NOT via
+  out-params. For testing call the clean 1-arg `Serum_Colorize(frame)` and read
+  `struct.palette` (192 B) / `struct.frame` (4096 B). The multi-arg signature in
+  old notes is wrong.
+- **Validation:** stage `<tmp>/<rom>/<rom>.cROMc`, `Serum_Load(<tmp>, rom, 0)`
+  (NULL = ValidateLoadedGeometry failed — check nccolors/nocolors), feed captured
+  frames through `Serum_Colorize`, count hits, and compare the returned palette
+  to the PAL palette for the matched mapping (byte-exact = full chain correct).
+
+## Replay segfault (operational)
+
+`replay_host.py` (libpinmame) SIGSEGVs on ~14% of runs — intermittent, native,
+NOT session-specific (big sessions crash next to identical ones that pass; boot
+time doesn't discriminate; a failed session succeeds on retry). Not our code; a
+prebuilt-binary bug. Fix: relaunch-retry (≤4×) per session in the capture batch.
+Empty/aborted sessions (0 switch events) also crash but run fine on retry.

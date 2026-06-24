@@ -799,6 +799,16 @@ def main(argv: list[str]) -> int:
         lib.PinmameSetHandleKeyboard.restype  = None
         lib.PinmameSetHandleKeyboard(0)
 
+    # Always use RAW mode so OnDisplayUpdated delivers shade indices (0–3 for a
+    # 4-shade DMD) instead of PWM-accumulated brightness (0–255). This matches
+    # what VPX passes to libdmdutil/Serum_Colorize, so captured frames work for
+    # CRC32 hit testing against PAL hashcodes.
+    if hasattr(lib, "PinmameSetDmdMode"):
+        lib.PinmameSetDmdMode.argtypes = [ctypes.c_int]
+        lib.PinmameSetDmdMode.restype  = None
+        lib.PinmameSetDmdMode(1)  # PINMAME_DMD_MODE_RAW
+        log("[replay_host] DMD mode set to RAW (0-3 per pixel)")
+
     log(f"[replay_host] PinmameRun({args.rom})")
     status = lib.PinmameRun(args.rom.encode("utf-8"))
     if status != PINMAME_STATUS_OK:

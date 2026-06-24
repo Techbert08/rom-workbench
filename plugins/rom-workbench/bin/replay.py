@@ -102,6 +102,8 @@ def parse_args() -> argparse.Namespace:
                          "Default 1.0.")
     ap.add_argument("--overwrite", action="store_true",
                     help="Allow --out-dir to exist.")
+    ap.add_argument("--dmd-raw", action="store_true",
+                    help="Capture DMD in RAW mode (0-3 per pixel) instead of BRIGHTNESS (0-255).")
     ap.add_argument("--platform", choices=("wpc", "whitestar"), default=None,
                     help="ROM-bank resolution for the dbg trace. Use 'whitestar' "
                          "for Sega/Stern (e.g. LOTR) so banked PCs in dbg/interactive "
@@ -229,6 +231,8 @@ def main() -> int:
         if args.dbg_mem:       cmd += ["--dbg-mem", args.dbg_mem]
     if args.interactive:
         cmd += ["--interactive", "--dbg-port", str(args.dbg_port)]
+    if getattr(args, "dmd_raw", False):
+        cmd += ["--dmd-raw"]
     if args.policy:
         cmd += ["--policy", str(args.policy.resolve()),
                 "--policy-step-sec", f"{args.policy_step_sec:.4f}"]
