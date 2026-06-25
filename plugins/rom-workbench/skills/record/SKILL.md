@@ -110,6 +110,25 @@ Launches Visual Pinball with the full table. The patched VPinMAME DLL (`VPinMAME
 
 **Stop recording** by closing the VP window or hitting Ctrl-C in the recording terminal. `--max-sec` is a safety cap.
 
+> **macOS BGFX libpinmame — two builds, by design (resolved 2026-06-24).** There
+> are intentionally two libpinmame builds and they do not conflict:
+> - **Bundle** (`VPinballX_BGFX.app/Contents/Frameworks/libpinmame`): built from the
+>   bundle's *exact* pinned pinmame SHA (`vbousquet/pinmame`, the one in that vpinball
+>   release's `platforms/config.sh`) **+ the vpintf switch recorder only**. It is
+>   ABI-matched to `plugin-pinmame` (all ~38 imports resolve, incl. `PinmameSetMsgAPI`/
+>   `SetSoundMode`/`SetTimeFence`) **and** exports `vp_switchlog`, so the **same**
+>   bundle both COLORIZES (live play) and RECORDS. `setup-pinball.py` builds/deploys
+>   this via `deploy_dylib_to_bundle` (prebuilt `lib/libpinmame-bundle.dylib`).
+> - **`PINMAME_DIR/libpinmame.dylib`**: the full switch-recorder **+ debugger +
+>   memory** build (5 patches on `PINMAME_BASE_COMMIT`). `replay_host.py` dlopens this
+>   *directly* — it never goes through the bundle, so its different lineage/ABI is fine.
+>
+> Earlier we deployed the PINMAME_DIR build *into the bundle*; it lacked the plugin
+> symbols and crashed plugin load. That's fixed — don't hand-swap `*.dylib.orig`
+> anymore. Keep `PINMAME_BUNDLE_SHA` in sync with `VPX_MAC_TAG` (see setup skill).
+> Note BGFX's PinMAME plugin loads ROMs from a **table-relative** `<table_dir>/pinmame/
+> roms/`, not the `PINMAME_DIR` `record.py` stages to — stage the ROM there for BGFX.
+
 ## NVRAM init: `init_nvram.py`
 
 ```powershell
@@ -454,7 +473,8 @@ ${CLAUDE_PLUGIN_ROOT}/
 
 `record.py` is one cross-platform recorder: it picks the right Visual Pinball
 binary and launch mechanism per OS (Windows `VPinballX64.exe` directly; macOS
-`open -a VPinballX_GL.app`), sets the patched-DLL switch-log env var, monitors
+`open -a VPinballX_BGFX.app`, falling back to `VPinballX_GL.app`), sets the
+patched-DLL switch-log env var, monitors
 the process, and folds the captured switch stream into `session.jsonl`. The
 investigation-side wrappers (`replay`, `init_nvram`) are likewise Python,
 orchestrating `replay_host.py`.

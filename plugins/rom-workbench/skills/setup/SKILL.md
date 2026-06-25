@@ -61,14 +61,48 @@ the directory layout VP's COM path expects.
 
 | Component | Where | Env var |
 |---|---|---|
-| Visual Pinball X (macOS GL build) | `<root>/vpinball` | `VPINBALL_DIR` |
-| Patched libpinmame.dylib | `<root>/pinmame` | `PINMAME_DIR` |
+| Visual Pinball X (macOS **BGFX** build — native Metal) | `<root>/vpinball` | `VPINBALL_DIR` |
+| Full libpinmame.dylib (switch + debugger + memory) | `<root>/pinmame` | `PINMAME_DIR` |
+| Bundle-matched libpinmame (switch recorder only) | inside `VPinballX_BGFX.app` | — |
 | Python venv + Pillow (for the DMD-render tools) | `<root>/venv` | — |
 
-On macOS the patched `libpinmame.dylib` ships prebuilt in `bin/` for the common
-case; `setup-pinball.py` only **builds from source** (from `--pinmame-src`,
-default `../pinmame` beside the repo) when no arch-matched prebuilt is available.
-Env vars are written to `~/.zshenv` and `~/.bash_profile`.
+On macOS, setup installs the **BGFX** build (`VPinballX_BGFX.app`), pinned to the
+`v10.8.1-3788` pre-release. BGFX renders through **Metal natively**; the older GL
+build runs OpenGL-over-Metal, which crashes on Apple Silicon. The BGFX bundle is a
+**plugin architecture** whose `plugin-pinmame` is hard-linked to a specific
+libpinmame ABI, so dylib swaps are not interchangeable. Setup deploys:
+
+- **libserum 2.6.0** (`lib/libserum.dylib`) over the bundle's stock zesinger 2.2.0.
+  The stock one returns NULL on the v7 `.cROMc` our converter writes; our PPUC 2.6.0
+  is ABI-identical (same `Serum_Frame_Struc` + the symbols libdmdutil binds) but reads
+  v7, so colorizations load. Original backed up as `libserum.2.2.0.dylib.orig`. (A
+  narrow, stable C ABI — this swap is safe.) `lib/libserum.dylib` is **built by the
+  converter** (`serum/CMakeLists.txt` `serum_shared` target, from the same pinned
+  v2.6.0 sources as the writer) and carries **patch 0002** which defaults
+  `maxFramesToSkip=20` so **uncolorized screens pass through** (show the original DMD)
+  instead of freezing on the last colorized frame — the BGFX `plugin-serum` never
+  calls `Serum_SetMaximumUnknownFramesToSkip` itself, so without this default a
+  no-trigger-match frame hangs. Deployed as the bundle's `libserum.2.2.0.dylib` file.
+- **Two libpinmame builds, by design** (the wide, evolving plugin ABI made a single
+  build unsafe — see [the record skill](../record/SKILL.md)):
+  - **into the bundle** — built from the bundle's *exact* pinned pinmame SHA
+    (`PINMAME_BUNDLE_SHA`, from `vbousquet/pinmame`, matching that vpinball release's
+    `platforms/config.sh`) **+ the vpintf switch recorder only** (`bundle-0001-
+    switchlog-vpintf-only.patch`). Result: all ~38 `plugin-pinmame` imports resolve
+    (so live **colorization** works) **and** `vp_switchlog` is present (so **recording**
+    works) — the one bundle does both. Prebuilt `lib/libpinmame-bundle.dylib`; built
+    with the SHA's *own* upstream cmake. Original backed up as `*.dylib.orig`.
+  - **into `PINMAME_DIR`** — the full switch + **debugger + memory** build (5 patches
+    on `PINMAME_BASE_COMMIT`). `replay_host.py` dlopens it *directly*, never through
+    the bundle, so its different lineage/ABI is fine. Prebuilt `lib/libpinmame.dylib`.
+
+After the swaps the bundle is ad-hoc re-signed and a Gatekeeper trial-launch runs.
+Both libpinmame builds ship prebuilt in `lib/` for the common case; setup **builds
+from source** only when no arch-matched prebuilt is available (the bundle build
+fetches the SHA tarball; the full build uses `--pinmame-src`, default `../pinmame`).
+**Keep `PINMAME_BUNDLE_SHA` in sync with `VPX_MAC_TAG`** when bumping the VPX pin —
+read it from `platforms/config.sh` at that release tag. Env vars are written to
+`~/.zshenv` and `~/.bash_profile`. (Windows stays on the 10.8.0 GL build.)
 
 ## Setup scripts
 
@@ -102,10 +136,11 @@ Steps:
 1. **Create the venv and install Pillow + PyMuPDF** — confirm `pip` is available for the launching interpreter, create a virtual environment at `<root>/venv`, then `pip install pillow pymupdf` **into that venv** (Pillow for the DMD-render tools; PyMuPDF to rasterize operator-manual matrix pages when building per-game atlases). Every tool re-execs itself into this venv on startup (`workbench_env.bootstrap_venv()`), so they resolve no matter which `python3` launched it — on Windows or POSIX.
 2. **Visual Pinball X** — download + install into `<root>/vpinball/` (skips gracefully if the pinned release has no asset for this OS/arch; replay doesn't need VPX).
 3. **Patched libpinmame** — deploy the prebuilt patched library from `bin/` into `<root>/pinmame/` (replay loads it via ctypes; it's self-contained, so nothing is downloaded).
-   - **macOS** — install `libpinmame.dylib` (prefer the arch-matched prebuilt in `bin/`; otherwise build from `--pinmame-src`, default `../pinmame` beside the repo). Also deploy it into the VPX bundle, ad-hoc re-sign, and run a Gatekeeper trial-launch.
+   - **macOS** — install the **full** `libpinmame.dylib` (switch+debugger+memory) into `PINMAME_DIR` (prefer the arch-matched prebuilt in `lib/`; else build from `--pinmame-src`, default `../pinmame`). Then swap our **libserum 2.6.0** (`lib/libserum.dylib`) over the bundle's stock 2.2.0 (so v7 `.cROMc` colorizations load), deploy the **bundle-matched** libpinmame (bundle SHA + vpintf switch recorder, `lib/libpinmame-bundle.dylib` or built from the SHA tarball) into the VPX bundle so it both colorizes and records, ad-hoc re-sign the whole bundle once, and run a Gatekeeper trial-launch.
    - **Windows** — copy `lib/libpinmame.dll` into `<root>/pinmame/`. Then download VPinMAME COM into `<root>/vpinmame/` (for `bass64.dll` + the layout), deploy the patched `VPinMAME64.dll`, and `regsvr32`-register it so VPX's COM `VPinMAME.Controller` loads **our** patched build (the switch recorder `record.py` depends on). Registration is forced when a *different* VPinMAME DLL currently owns the COM server — a common cause of "recording produced no switches" — and skipped only when ours is already registered. Needs Administrator once; the script triggers a UAC prompt and waits, printing the exact manual relaunch command if elevation is declined.
 4. **Ghidra (optional, cross-platform)** — download + extract the pinned Ghidra release into `<root>/ghidra/` (kept as the versioned `ghidra_X.Y.Z_PUBLIC/` dir, exported as `GHIDRA_DIR`); warn if no JDK 21+ is on `PATH`. Skipped gracefully on download failure — only the `ghidra` skill needs it. The pin lives in the `GHIDRA_*` constants near the top of `setup-pinball.py`; bump them to update.
-5. **Persist the install dirs** — `VPINBALL_DIR`, `PINMAME_DIR`, (Windows) `VPINMAME_DIR`, and (if installed) `GHIDRA_DIR` — two ways:
+5. **ffmpeg (optional, cross-platform)** — used by the colorize workflow's DMD-video renderer (`scripts/render_colorized.py` muxes colorized frames into mp4). If `ffmpeg` is already on `PATH`, nothing happens; otherwise macOS installs it via Homebrew (`brew install ffmpeg`), and other platforms print an install hint (winget/choco on Windows, the package manager on Linux). Non-fatal — record/replay/build/colorize work without it; only the mp4 render needs it. It lives on `PATH` (not under the data dir), so it isn't persisted.
+6. **Persist the install dirs** — `VPINBALL_DIR`, `PINMAME_DIR`, (Windows) `VPINMAME_DIR`, and (if installed) `GHIDRA_DIR` — two ways:
    - As user-scope env vars, for interactive shells: macOS/Linux write `~/.zshenv` and `~/.bash_profile`; Windows writes the user environment (HKCU).
    - Into `config.env` at the **stable** platform-default app-data dir (`%LOCALAPPDATA%\rom-workbench\config.env`, `~/Library/Application Support/rom-workbench/config.env`, or `$XDG_DATA_HOME/rom-workbench/config.env`) — note this stays at the app-data location even though the artifacts now live under `${CLAUDE_PLUGIN_DATA}`. The file also records `CLAUDE_PLUGIN_DATA` itself, which is how each tool locates the venv to re-exec into (that variable is *not* in the ambient shell the tools are launched from). Every entrypoint calls `workbench_env.load_config()` at startup to read it, so the toolchain works in a fresh shell that never inherited the user env vars — no "open a new terminal" step. An explicit shell export still wins over the file.
 
@@ -364,7 +399,8 @@ ${CLAUDE_PLUGIN_ROOT}/           # shipped with the plugin (read-only)
 │   ├── setup-pinball.py         # cross-platform VP + libpinmame (+ VPinMAME on Windows) installer
 │   └── workbench_env.py         # shared config + venv bootstrap (bootstrap_venv)
 └── lib/                         # prebuilt patched libraries this script deploys
-    ├── libpinmame.dylib         # macOS
+    ├── libpinmame.dylib         # macOS (patched switch-recorder build)
+    ├── libserum.dylib           # macOS (PPUC 2.6.0 — v7-capable; swapped into the VPX bundle)
     ├── libpinmame.dll           # Windows
     └── VPinMAME64.dll           # Windows (VPinMAME COM recorder)
 

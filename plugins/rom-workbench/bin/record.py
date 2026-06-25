@@ -121,7 +121,7 @@ def launch_and_wait(vpx_app: Path, vpx_exe: Path, table: Path,
                     "-DisableTrueFullscreen", "-play", str(table)], check=True)
     pid = None
     for _ in range(10):
-        out = subprocess.run(["pgrep", "-f", "VPinballX_GL"],
+        out = subprocess.run(["pgrep", "-f", vpx_exe.name],
                              capture_output=True, text=True).stdout.split()
         if out:
             pid = int(out[0])
@@ -252,13 +252,22 @@ def main() -> int:
         if not vpx_exe.is_file():
             die(f"VPinballX64.exe not found at {vpx_exe}.")
     else:
-        vpx_app = vpinball / "VPinballX_GL.app"
-        if not vpx_app.is_dir():
-            vpx_app = Path("/Applications/VPinballX_GL.app")
-        vpx_exe = vpx_app / "Contents" / "MacOS" / "VPinballX_GL"
-        if not vpx_exe.is_file():
-            die(f"VPinballX_GL not found at {vpx_exe}. Run the setup skill (setup-pinball.py), "
-                "or drag VPinballX_GL.app into VPINBALL_DIR.")
+        # Prefer the BGFX build (native Metal; what the setup skill installs now);
+        # fall back to the older GL build for pre-existing installs. Either app's
+        # executable is <stem> under Contents/MacOS.
+        vpx_app = None
+        for stem in ("VPinballX_BGFX", "VPinballX_GL"):
+            for base in (vpinball, Path("/Applications")):
+                cand = base / f"{stem}.app"
+                if (cand / "Contents" / "MacOS" / stem).is_file():
+                    vpx_app = cand
+                    break
+            if vpx_app:
+                break
+        if not vpx_app:
+            die("No VPinballX_BGFX.app or VPinballX_GL.app found under "
+                f"{vpinball} or /Applications. Run the setup skill (setup-pinball.py).")
+        vpx_exe = vpx_app / "Contents" / "MacOS" / vpx_app.stem
 
     # Stage the ROM into VP's roms dir just before launch (VPinMAME loads it by
     # gamename from there). Overwrites any stale copy from a previous run.

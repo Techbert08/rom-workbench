@@ -56,11 +56,15 @@ The AES key is usually shipped with the colorization as `vni.key` (hex).
 ### Step 2 — build the converter (once per machine)
 
 ```
-'${CLAUDE_PLUGIN_ROOT}/serum/build.sh'          # → serum/build/pac2serum
+'${CLAUDE_PLUGIN_ROOT}/serum/build.sh'   # → serum/build/pac2serum + refreshes lib/libserum.dylib
 ```
 Pins libserum to the exact PPUC v2.6.0 release VPX bundles (so the cereal
 `SerumData` layout matches byte-for-byte). A prebuilt
-`serum/bin/pac2serum.macos-arm64` is available if you can't build.
+`serum/bin/pac2serum.macos-arm64` is available if you can't build. The build also
+produces the **runtime** `lib/libserum.dylib` (the `serum_shared` target) from the
+same patched sources — this is what `setup` deploys into the VPX bundle, and it
+carries patch 0002 (`maxFramesToSkip=20`) so uncolorized screens **pass through** to
+the original DMD instead of freezing. Writer and reader stay in lockstep.
 
 ### Step 3 — capture DMD frames from the FACTORY ROM (RAW mode)
 
@@ -100,6 +104,64 @@ Drop `<rom>.cROMc` at `<AltColorPath>/<rom>/<rom>.cROMc` (VPX reads
 `AltColor=...` from `VPinballX.ini`; libdmdutil's SerumThread loads it on the
 first `Mode::Data` frame). The ROM name is the PinMAME zip stem (e.g. `lotr`).
 
+### Preview the colorization headlessly (no VPX)
+
+Render a captured session's DMD as colorized video straight through libserum — the
+same pixels VPX/libdmdutil would show, but with no emulator/VPX in the loop. This is
+the fastest validate-and-eyeball loop after a build:
+
+```
+python3 '${CLAUDE_PLUGIN_ROOT}/bin/render_dmd_video.py' <replay-out-dir> \
+    --colorize --rom <rom>        # mp4 (or .gif without ffmpeg); --altcolor/--lib to override
+```
+
+It loads the deployed `<altcolor>/<rom>/<rom>.cROMc`, colorizes each RAW (0–3) frame
+via `Serum_Colorize`, resamples to real-time playback, and prints how many frames
+matched a Serum trigger — a quick coverage sanity check that doubles as the
+"validate in libserum" step (a NULL load or zero matches flags a broken `.cROMc`).
+
+### Verify in-game LIVE (VPX BGFX, macOS) — the real proof
+
+The headless preview proves the `.cROMc` is correct; this proves the whole VPX
+runtime colorizes it on a live ROM. **The BGFX standalone build routes Serum
+completely differently from the old GL build** — get any of four things wrong and
+the DMD stays grayscale or VPX crashes on start. `play-colorized.py` encodes the
+working recipe (first confirmed in-game colorization: LOTR, 2026-06-24):
+
+```
+python3 '${CLAUDE_PLUGIN_ROOT}/bin/play-colorized.py' --rom <rom> \
+    --table "<path>/<table>.vpx" \
+    [--rom-zip orig/<rom>.zip] [--cromc output/<rom>.cROMc]   # else resolved by convention
+```
+
+What it does, and **why each step is load-bearing under BGFX**:
+
+1. **Serum is its own `[Plugin.Serum]`** — not libdmdutil's built-in path, and
+   **NOT `[Standalone] AltColor`** (that key is the libdmdutil/PIN2DMD *palette*
+   technique, a different mechanism). The script sets `Enable = 1`.
+2. **The Serum plugin ignores `~/.vpinball/altcolor`.** On game start it searches
+   `<table_dir>/serum/<rom>/<rom>.cROMc`, then
+   `<table_dir>/pinmame/altcolor/<rom>/<rom>.cROMc`, then `<SerumPath setting>/...`.
+   The script stages the `.cROMc` into that **table-relative `pinmame/` tree**.
+3. **The BGFX PinMAME plugin loads ROMs from a table-relative rompath**
+   (`vpmPath = <table_dir>/pinmame/` → `<table_dir>/pinmame/roms/<rom>.zip`), NOT
+   the `PINMAME_DIR` the `record` skill stages to, NOT `[Plugin.PinMAME]
+   PinMAMEPath`. Wrong path → "required files are missing" → game ends instantly →
+   `libpinmame OnGameEnd` NULL-deref crash. The script stages the ROM there too.
+4. **BGFX's plugin-pinmame needs an ABI-matched libpinmame.** `setup-pinball.py`
+   builds the bundle's libpinmame from the bundle's *exact* pinned pinmame SHA
+   (`vbousquet/pinmame`) **+ the vpintf switch recorder only**, so the one bundle
+   libpinmame both colorizes (all ~38 plugin imports resolve) **and** records
+   (`vp_switchlog`). The full debugger/memory build is separate — at `PINMAME_DIR`,
+   loaded directly by `replay_host.py`, never through the bundle. `play-colorized.py`
+   sanity-checks that the bundle lib is the matched build.
+
+Confirmation in `~/.vpinball/vpinball.log`: ROM boots (no "NOT FOUND"), then
+`DMD Source Changed: format=1` immediately followed by `format=2` — the Serum
+plugin inserting its colorized RGB source. Then look at the DMD: it's in color.
+Known cosmetic bug: VPX SIGSEGVs in `libpinmame OnGameEnd` on window close
+(a VPX/plugin teardown bug, unrelated to colorization).
+
 ## Coverage tools
 
 - **Catalog covered vs uncovered triggers** (renders each mapping's colorized
@@ -109,6 +171,8 @@ first `Mode::Data` frame). The ROM name is the PinMAME zip stem (e.g. `lotr`).
   # view: sips -s format png -z 192 768 cat/uncovered/<f>.ppm --out x.png  (then Read it)
   ```
   Use this to *see* which screens you still lack and which game modes to target.
+  Tile many at once with `scripts/montage.py <out.ppm> <cols> <scale> <ppms...>`
+  (→ `sips` to PNG, then Read) to scan coverage at a glance.
 - **Crack the mask scheme on a NEW game** (if Replace-only matching misses the
   mask modes): `scripts/discover_masks.py --pal ... --frames captures` — finds
   the masked-plane convention and which mask each mapping uses.

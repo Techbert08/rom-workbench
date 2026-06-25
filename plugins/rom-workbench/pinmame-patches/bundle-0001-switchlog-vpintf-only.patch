@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: rom-workbench <noreply@local>
+Date: Wed, 24 Jun 2026 21:37:51 +0000
+Subject: [PATCH] libpinmame bundle: switch recorder at vp_putSwitch (vpintf-only)
+
+Self-contained switch-recorder for the VPX BGFX bundle's libpinmame.
+Logs every externally-driven switch edge (vp_putSwitch choke point) to
+VPINMAME_SWITCHLOG, stamped with the emulation clock. vpintf-only: no
+m6809/debugger dependency, so it applies on the bundle's pinned pinmame
+SHA (vbousquet/pinmame) without the full debug toolchain, preserving the
+exact plugin-pinmame ABI (all 38 imports) needed for live colorization.
+---
+diff --git a/src/wpc/vpintf.c b/src/wpc/vpintf.c
+index 794035f..f5bff60 100644
+--- a/src/wpc/vpintf.c
++++ b/src/wpc/vpintf.c
+@@ -3,6 +3,47 @@
+ #include "mech.h"
+ #include "vpintf.h"
+ #include "snd_cmd.h"
++#include "timer.h"
++#include <stdio.h>
++#include <stdlib.h>
++
++/*------------------------------------------------------------------
++/  Switch recorder.
++/
++/  vp_putSwitch (vpintf.h) is the single choke point every *externally
++/  driven* switch change passes through: the COM Controller
++/  (put_Switch / put_Switches) and libpinmame (PinmameSetSwitch /
++/  PinmameSetSwitches) all funnel into it. Switch changes the core
++/  derives internally (e.g. flipper end-of-stroke) call core_setSw
++/  directly and are deliberately NOT logged here -- they are
++/  regenerated deterministically when the recorded stream is replayed.
++/
++/  When the VPINMAME_SWITCHLOG env var names a file, each change is
++/  appended as a JSONL "switch" record stamped with the emulation clock
++/  (timer_get_time() -- the same time base PinmameSetTimeFence advances),
++/  so the stream replays with faithful relative timing and never relies
++/  on any polling from outside the DLL. The env var is read once, lazily,
++/  on the first switch change.
++/------------------------------------------------------------------*/
++static FILE *g_swlog       = NULL;
++static int   g_swlog_state = 0; /* 0=unchecked, 1=open, -1=disabled */
++
++void vp_switchlog(int swNo, int newStat) {
++  if (g_swlog_state == 0) {
++    const char *path = getenv("VPINMAME_SWITCHLOG");
++    if (path && *path) {
++      g_swlog = fopen(path, "w");
++      g_swlog_state = g_swlog ? 1 : -1;
++    } else {
++      g_swlog_state = -1;
++    }
++  }
++  if (g_swlog_state == 1) {
++    fprintf(g_swlog, "{\"t\":%.6f,\"n\":%d,\"on\":%d,\"kind\":\"switch\"}\n",
++            timer_get_time(), swNo, newStat ? 1 : 0);
++    fflush(g_swlog);
++  }
++}
+ 
+ static struct {
+   UINT8  lastPhysicsOutput[CORE_MODOUT_MAX];
+diff --git a/src/wpc/vpintf.h b/src/wpc/vpintf.h
+index 5483906..a2b8374 100644
+--- a/src/wpc/vpintf.h
++++ b/src/wpc/vpintf.h
+@@ -46,10 +46,17 @@ INLINE int vp_getWPCNumbering(void) { return WPCNUMBERING; }
+ /-------------------------------------*/
+ int vp_getLamp(int lampNo);
+ 
++/*------------------------------------
++/  Record an externally-driven switch change to the switch log.
++/  No-op unless the VPINMAME_SWITCHLOG env var names an output file.
++/  Implemented in vpintf.c; see there for the rationale.
++/-------------------------------------*/
++void vp_switchlog(int swNo, int newStat);
++
+ /*------------------------------------
+ /  set status of a switch (0=off, !0=on)
+ /-------------------------------------*/
+-INLINE void vp_putSwitch(int swNo, int newStat) { core_setSw(swNo, newStat); }
++INLINE void vp_putSwitch(int swNo, int newStat) { vp_switchlog(swNo, newStat); core_setSw(swNo, newStat); }
+ 
+ /*------------------------------------
+ /  get status of a switch (0=off, !0=on)
+
+-- 
+2.39.0
+

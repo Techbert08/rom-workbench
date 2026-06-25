@@ -12,6 +12,13 @@ the dot grid with nearest-neighbour, and burns in a running timecode + source
 frame number so you can pause and call out an exact moment (the timecode is the
 session/trace `t`, so it lines up with trace.state.jsonl and the switch log).
 
+With `--colorize` it runs each frame through **libserum** (the Serum colorization
+the `colorize` skill produces) and renders the colourised RGB output instead of the
+grey dot grid — the same pixels VPX/libdmdutil would show at runtime, but headless.
+This expects RAW shade-index frames (0-3 per pixel, what `replay.py --trace dmd`
+captures for a 4-shade DMD), since that's what libserum's trigger hashes match; it
+loads the installed bundle's libserum and the deployed `<altcolor>/<rom>/<rom>.cROMc`.
+
 Encodes to H.264 mp4 via ffmpeg by default; falls back to an animated GIF
 (Pillow only) if ffmpeg isn't found.
 
@@ -33,13 +40,15 @@ Defaults: 30 fps, scale 6 (128x32 -> 768x192), out=<replay-dir>/dmd.mp4.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-from workbench_env import bootstrap_venv
+from workbench_env import bootstrap_venv, load_config, load_game_manifest
 
 bootstrap_venv()  # re-exec under the toolkit venv (where Pillow lives) before importing it
 
@@ -50,6 +59,96 @@ except ImportError as e:
         "Pillow is required. Install it with `pip install pillow` "
         "(the `setup` skill does this for you), then re-run."
     ) from e
+
+
+# --- libserum (only used in --colorize mode) ---------------------------------
+
+class SerumFrame(ctypes.Structure):
+    """Mirror of libserum's `Serum_Frame_Struc` (serum.h). Field order/types must
+    match exactly; ctypes applies the same natural alignment as the C compiler.
+    Pointers are c_void_p (8 bytes) regardless of pointee type. For a V1
+    colorization the colorized output is in `frame` (w*h palette indices 0-63) and
+    `palette` (64 RGB triples)."""
+    _fields_ = [
+        ("frame", ctypes.c_void_p), ("palette", ctypes.c_void_p),
+        ("rotations", ctypes.c_void_p), ("frame32", ctypes.c_void_p),
+        ("width32", ctypes.c_uint32), ("rotations32", ctypes.c_void_p),
+        ("rotationsinframe32", ctypes.c_void_p), ("modifiedelements32", ctypes.c_void_p),
+        ("frame64", ctypes.c_void_p), ("width64", ctypes.c_uint32),
+        ("rotations64", ctypes.c_void_p), ("rotationsinframe64", ctypes.c_void_p),
+        ("modifiedelements64", ctypes.c_void_p), ("SerumVersion", ctypes.c_uint32),
+        ("flags", ctypes.c_uint8), ("nocolors", ctypes.c_uint32),
+        ("ntriggers", ctypes.c_uint32), ("triggerID", ctypes.c_uint32),
+        ("frameID", ctypes.c_uint32), ("rotationtimer", ctypes.c_uint32),
+    ]
+
+
+_LOG_KEEP = None  # the log-callback thunk MUST stay referenced or libserum segfaults
+
+
+def resolve_libserum(explicit: str | None) -> Path:
+    """Find the libserum dylib: --lib if given, else the installed VPX bundle's
+    (BGFX preferred, GL fallback). The setup skill swaps our v7-capable build into
+    the bundle, keeping its versioned filename — so prefer the real versioned file
+    over the symlink/.orig backup."""
+    if explicit:
+        p = Path(explicit).expanduser()
+        if not p.exists():
+            raise SystemExit(f"--lib not found: {p}")
+        return p
+    vp = os.environ.get("VPINBALL_DIR")
+    if not vp:
+        raise SystemExit("VPINBALL_DIR not set (run the setup skill) and no --lib given.")
+    for app in ("VPinballX_BGFX.app", "VPinballX_GL.app"):
+        fw = Path(vp) / app / "Contents" / "Frameworks"
+        cands = sorted(fw.glob("libserum*.dylib"))
+        real = [c for c in cands if c.is_file() and not c.is_symlink()
+                and not c.name.endswith(".orig")]
+        if real:
+            return real[0]
+        if cands:
+            return cands[0]
+    raise SystemExit(f"No libserum*.dylib under {vp}/*/Contents/Frameworks (run setup, or pass --lib).")
+
+
+def load_serum(lib_path: Path, altcolor: Path, rom: str):
+    """dlopen libserum, silence its logging, Serum_Load the rom. Returns (lib, *SerumFrame)."""
+    global _LOG_KEEP
+    lib = ctypes.CDLL(str(lib_path))
+    cb = ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_void_p)
+    _LOG_KEEP = cb(lambda fmt, args, ud: None)
+    try:
+        lib.Serum_SetLogCallback.argtypes = [cb, ctypes.c_void_p]
+        lib.Serum_SetLogCallback.restype = None
+        lib.Serum_SetLogCallback(_LOG_KEEP, None)
+    except AttributeError:
+        pass  # older libserum without the log callback
+    lib.Serum_Load.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint8]
+    lib.Serum_Load.restype = ctypes.POINTER(SerumFrame)
+    pserum = lib.Serum_Load(str(altcolor).encode(), rom.encode(), 0)
+    if not pserum:
+        raise SystemExit(f"Serum_Load returned NULL — no loadable cROMc at "
+                         f"{altcolor}/{rom}/{rom}.cROMc (or libserum can't read its format).")
+    lib.Serum_Colorize.argtypes = [ctypes.c_char_p]
+    lib.Serum_Colorize.restype = ctypes.c_uint32
+    return lib, pserum
+
+
+def colorize_frame(dmd_dir: Path, fid: int, w: int, h: int, lib, s) -> Image.Image | None:
+    """Colorize one RAW (0-3) frame via libserum; return a small (w x h) RGB image.
+    Must be called in source-frame order so libserum's sequential state is correct."""
+    src = dmd_dir / f"{fid:06d}.bin"
+    if not src.exists():
+        return None
+    data = src.read_bytes()
+    if len(data) != w * h:
+        return None
+    lib.Serum_Colorize(ctypes.create_string_buffer(data, w * h))
+    idx_px = ctypes.string_at(s.frame, w * h)       # palette indices 0-63
+    pal = ctypes.string_at(s.palette, 192)          # 64 RGB triples
+    img = Image.frombytes("P", (w, h), idx_px)
+    img.putpalette(pal + bytes(768 - len(pal)))     # pad to 256*3
+    return img.convert("RGB")
 
 
 def read_index(index_path: Path) -> tuple[int, int, list[tuple[int, float]]]:
@@ -161,18 +260,22 @@ def _font(px: int):
 
 def compose(img: Image.Image, scale: int, t: float, fid: int,
             timecode: bool) -> Image.Image:
-    """Upscale a DMD frame and optionally append a timecode strip below it."""
+    """Upscale a DMD frame and optionally append a timecode strip below it.
+    Preserves the input mode — "L" for grayscale, "RGB" for colorized frames."""
+    mode = "RGB" if img.mode == "RGB" else "L"
+    bg = (0, 0, 0) if mode == "RGB" else 0
+    fg = (255, 255, 255) if mode == "RGB" else 255
     big = img.resize((img.width * scale, img.height * scale), Image.NEAREST)
     if not timecode:
-        return big.convert("L")
+        return big.convert(mode)
     strip_h = max(12, 4 * scale)
     if strip_h % 2:
         strip_h += 1
-    canvas = Image.new("L", (big.width, big.height + strip_h), 0)
+    canvas = Image.new(mode, (big.width, big.height + strip_h), bg)
     canvas.paste(big, (0, 0))
     draw = ImageDraw.Draw(canvas)
     draw.text((4, big.height + 2), f"t={t:7.2f}s   f={fid:05d}",
-              fill=255, font=_font(max(11, strip_h - 6)))
+              fill=fg, font=_font(max(11, strip_h - 6)))
     return canvas
 
 
@@ -217,6 +320,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="Don't mux the `sound` trace audio even if present.")
     ap.add_argument("--gif", action="store_true",
                     help="Force animated GIF output instead of mp4.")
+    ap.add_argument("--colorize", action="store_true",
+                    help="Colorize each frame through libserum (RGB output). Expects RAW "
+                         "0-3 shade-index frames and a deployed <altcolor>/<rom>/<rom>.cROMc.")
+    ap.add_argument("--rom", default=None,
+                    help="ROM name for --colorize (default: from ./game.json if present).")
+    ap.add_argument("--altcolor", type=Path,
+                    default=Path("~/.vpinball/altcolor").expanduser(),
+                    help="AltColor root holding <rom>/<rom>.cROMc (default: ~/.vpinball/altcolor).")
+    ap.add_argument("--lib", default=None,
+                    help="libserum dylib path for --colorize (default: auto-detect VPX bundle).")
     args = ap.parse_args(argv)
 
     dmd_dir = args.replay_dir / "dmd"
@@ -230,6 +343,28 @@ def main(argv: list[str] | None = None) -> int:
     if not schedule:
         raise SystemExit("Nothing to render in the requested range.")
 
+    # --colorize: load libserum + the rom's cROMc, then colorize every source frame
+    # in fid order (so libserum's sequential state is correct) into an RGB cache.
+    color_cache: dict[int, Image.Image] = {}
+    if args.colorize:
+        load_config()  # recover VPINBALL_DIR from config.env if not in the env
+        rom = args.rom or (load_game_manifest() or {}).get("rom")
+        if not rom:
+            raise SystemExit("--colorize needs --rom (or a ./game.json with \"rom\").")
+        lib_path = resolve_libserum(args.lib)
+        lib, pserum = load_serum(lib_path, args.altcolor, rom)
+        s = pserum.contents
+        print(f"colorize: {lib_path.name}  rom={rom}  "
+              f"(SerumVersion={s.SerumVersion}, nocolors={s.nocolors})")
+        hits = 0
+        for fid, _t in frames:  # frames is sorted by fid == temporal order
+            img = colorize_frame(dmd_dir, fid, w, h, lib, s)
+            if img is not None:
+                color_cache[fid] = img
+                if s.frameID not in (0xFFFFFFFF, 0xFFFFFFFE):
+                    hits += 1
+        print(f"colorized {len(color_cache)} frames ({hits} matched a Serum trigger)")
+
     use_gif = args.gif or shutil.which("ffmpeg") is None
     out = args.out or (args.replay_dir / ("dmd.gif" if use_gif else "dmd.mp4"))
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -240,15 +375,18 @@ def main(argv: list[str] | None = None) -> int:
               "(omit --gif / install ffmpeg for an mp4 with audio).")
         audio = None
 
-    # Cache composed frames (many output ticks reuse the same source frame).
+    # Cache the small per-source-frame images (many output ticks reuse one source
+    # frame). Colorized frames are precomputed above; grayscale ones load lazily.
     cache: dict[int, Image.Image] = {}
 
     def composed(fid: int, t: float) -> Image.Image:
-        # Timecode varies per tick, so only cache the raw upscaled DMD.
-        if fid not in cache:
-            raw = load_frame(dmd_dir, fid, w, h) or Image.new("L", (w, h), 0)
-            cache[fid] = raw
-        return compose(cache[fid], args.scale, t, fid, timecode)
+        if args.colorize:
+            base = color_cache.get(fid) or Image.new("RGB", (w, h), (0, 0, 0))
+        else:
+            if fid not in cache:
+                cache[fid] = load_frame(dmd_dir, fid, w, h) or Image.new("L", (w, h), 0)
+            base = cache[fid]
+        return compose(base, args.scale, t, fid, timecode)
 
     if use_gif:
         imgs = [composed(fid, t) for fid, t in schedule]
@@ -257,12 +395,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Wrote GIF: {out}  ({len(imgs)} frames @ {args.fps}fps)")
         return 0
 
-    # mp4 via ffmpeg: pipe raw gray8 frames at the composed dimensions.
+    # mp4 via ffmpeg: pipe raw frames (gray8, or rgb24 when colorized) at the
+    # composed dimensions.
     sample = composed(schedule[0][0], schedule[0][1])
     vw, vh = sample.size
+    pix_fmt = "rgb24" if args.colorize else "gray"
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
-        "-f", "rawvideo", "-pixel_format", "gray",
+        "-f", "rawvideo", "-pixel_format", pix_fmt,
         "-video_size", f"{vw}x{vh}", "-framerate", str(args.fps),
         "-i", "-",
     ]

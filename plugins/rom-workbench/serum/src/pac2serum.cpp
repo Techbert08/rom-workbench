@@ -17,10 +17,11 @@
 //
 // Pixel mapping note
 // ──────────────────
-// PIN2DMD ColorMask VNI frames use 7 bit-planes (values 0–127).  The upper bit
-// (bit 6, values 64–127) flags a pixel as "apply colour from palette[val & 63]".
-// Values 0–63 are passthrough (original DMD shade).  For the Serum output we
-// mask all pixels to 6 bits so every value is a valid palette index.
+// PIN2DMD VNI frames store 7 planes = 6 colour-index planes (markers 0x00..0x05,
+// giving palette index 0..63) + 1 MASK plane (marker 0x6d, NOT part of the
+// index).  See decode_vni_frame() — the mask plane is excluded and each data
+// plane goes to bit = its marker.  (The old "bit 6 = colorise flag, & 0x3F" model
+// was wrong: it folded the 0x6d mask plane into the index.)
 
 #include <cassert>
 #include <cstdint>
@@ -90,22 +91,40 @@ static std::vector<uint8_t> hs_decompress(const uint8_t *src, size_t src_len) {
 
 // ── Bit-plane decoder ─────────────────────────────────────────────────────────
 
-// VNI stores planes MSB-first within each byte: bit 7 of byte b is the leftmost
-// pixel of its 8-pixel group.  Reading bit (7 - i%8) gives the correct spatial
-// order — verified by rendering: with LSB the colorized frames come out
-// horizontally mirrored vs the live DMD ("TWO TOWERS JACKPOT" etc.).  (This is
-// the *display* order for cframes; the trigger hash uses the live frame and a
-// separate LSB plane packing, so the two conventions are independent.)
-static std::vector<uint8_t> decode_planes(const uint8_t *planes_raw,
-                                          int bit_depth, int plane_size,
-                                          int width, int height) {
+// Decode one VNI animation frame to a 0..63 indexed image, honouring PIN2DMD's
+// plane layout (matches PPUC/libvni read_planes + render):
+//
+//   A `bit_depth`-plane frame is stored as [marker][plane]…, MSB-first within
+//   each byte.  Exactly one plane carries the marker 0x6d ('m') — that is the
+//   MASK plane, NOT part of the colour index; libvni pulls it into frame.mask
+//   and the remaining planes form the index.  The other planes carry markers
+//   0x00..0x05 which ARE the bit positions (plane marked n → bit n).  So a
+//   "7-plane" frame is really 6 index planes (values 0..63) + 1 mask plane.
+//
+// The earlier decoder assigned bit = read-order and then masked & 0x3F.  Because
+// the 0x6d mask plane is stored FIRST, that put the mask in bit 0 and shifted the
+// real index up, so & 0x3F kept the mask bit and dropped the top index plane —
+// corrupting ~99% of colorised pixels.  Decode by marker instead.
+//
+// Reading bit (7 - i%8) gives the correct spatial order (LSB mirrors the frame
+// horizontally vs the live DMD — "TWO TOWERS JACKPOT" etc.).
+static std::vector<uint8_t> decode_vni_frame(const uint8_t *buf, size_t buf_len,
+                                             int bit_depth, int plane_size,
+                                             int width, int height) {
   const int npixels = width * height;
   std::vector<uint8_t> pixels(npixels, 0);
+  size_t off = 0;
   for (int p = 0; p < bit_depth; ++p) {
-    const uint8_t *plane = planes_raw + p * plane_size;
+    if (off + 1 + (size_t)plane_size > buf_len) break;  // short data: stop
+    uint8_t marker = buf[off++];
+    const uint8_t *plane = buf + off;
+    off += plane_size;
+    if (marker == 0x6d) continue;          // mask plane — excluded from index
+    if (marker > 5) continue;              // defensive: only 6 index planes
+    const int bitpos = marker;             // data-plane marker == its bit
     for (int i = 0; i < npixels; ++i) {
       int bit = (plane[i / 8] >> (7 - (i % 8))) & 1;
-      pixels[i] |= (uint8_t)(bit << p);
+      pixels[i] |= (uint8_t)(bit << bitpos);
     }
   }
   return pixels;
@@ -254,8 +273,8 @@ static PalFile parse_pal(const std::vector<uint8_t> &d) {
 struct VniFrame {
   uint32_t             hash;
   uint16_t             delay_ms;
-  std::vector<uint8_t> pixels;      // indexed-colour bytes, masked to 0..63
-  std::vector<uint8_t> pixels_raw;  // full 0..127 (bit6 = colorised flag)
+  std::vector<uint8_t> pixels;      // 0..63 palette indices (0x6d mask excluded)
+  std::vector<uint8_t> pixels_raw;  // == pixels (kept for the learn-shade diag)
 };
 
 struct Animation {
@@ -326,34 +345,27 @@ static Animation parse_animation(const std::vector<uint8_t> &d, size_t start,
     bool compressed = false;
     if (version >= 3) compressed = (d[off++] != 0);
 
-    std::vector<uint8_t> planes_raw;
+    // Both paths yield a marker-inline plane buffer ([marker][plane]…); the
+    // decoder walks the markers (and excludes the 0x6d mask plane).
+    std::vector<uint8_t> blob;
+    const uint8_t *buf; size_t buf_len;
     if (compressed) {
       uint32_t comp_size = be32(&d[off]); off += 4;
-      planes_raw = hs_decompress(&d[off], comp_size);
+      blob = hs_decompress(&d[off], comp_size);
       off += comp_size;
+      buf = blob.data(); buf_len = blob.size();
     } else {
-      planes_raw.resize(bit_depth * plane_size);
-      for (int p = 0; p < bit_depth; ++p) {
-        /* plane marker */ off++;
-        memcpy(planes_raw.data() + p * plane_size, &d[off], plane_size);
-        off += plane_size;
-      }
-    }
-
-    if ((int)planes_raw.size() < bit_depth * plane_size) {
-      fprintf(stderr, "  warn: short planes in '%s' frame %d, padding\n",
-              anim.name.c_str(), fi);
-      planes_raw.resize(bit_depth * plane_size, 0);
+      const size_t span = (size_t)bit_depth * (1 + plane_size);  // marker+plane
+      buf = &d[off]; buf_len = span;
+      off += span;
     }
 
     VniFrame frame;
     frame.hash     = hash;
     frame.delay_ms = delay_ms;
-    frame.pixels   = decode_planes(planes_raw.data(), bit_depth, plane_size,
-                                   width, height);
-    frame.pixels_raw = frame.pixels;  // keep full 0..127 (bit6 = colorised)
-    // Mask to 6 bits so every value is a valid palette index (0–63)
-    for (auto &px : frame.pixels) px &= 0x3F;
+    frame.pixels   = decode_vni_frame(buf, buf_len, bit_depth, plane_size,
+                                      width, height);   // already 0..63 indices
+    frame.pixels_raw = frame.pixels;
 
     anim.frames.push_back(std::move(frame));
   }
@@ -715,6 +727,29 @@ int main(int argc, char **argv) {
   for (uint32_t id = 0; id < sd.ncompmasks; ++id)
     sd.compmasks.set(id, compmask_data[id].data(), 128 * 32);
 
+  // ── Dynamic-region colorization (the live score etc.) ──────────────────────
+  // ColorMask/LCM are SUBSTITUTION modes: the masked (static) region is coloured
+  // by the stored cframe, but the *dynamic* region (score digits, timers — the
+  // pixels the PIN2DMD mask leaves OUT of the trigger hash) must track the LIVE
+  // DMD content, not a frozen frame.  libvni's render_color_mask does this by
+  // taking the low planes from the live frame and the high planes from the VNI
+  // colorization: output index = (live_shade) | (vni_value & 0x3C).
+  //
+  // libserum V1 expresses the same thing via per-frame `dynamasks` + `dyna4cols`
+  // (Colorize_Framev1): for a pixel whose dynamasks[tk] != 255 the output is
+  //   cpal[ dyna4cols[ dynamasks[tk]*nocolors + live_shade ] ].
+  // So set the dynamic layer = the VNI colour band (cframe>>2, 0..15) and make
+  // dyna4cols the identity that re-inserts the live shade in the low 2 bits:
+  //   dyna4cols[L*nocolors + s] = (L<<2) | s.
+  // Static pixels get dynamasks=255 → libserum keeps using the cframe (unchanged
+  // from today's correct static colorization).  frameHasDynamic / dynamasks_active
+  // are derived from dynamasks at load (SerumData: active where != 255).
+  const int DYNA_SETS = 16;  // MAX_DYNA_4COLS_PER_FRAME (V1); covers cframe>>2 (4 bits)
+  std::vector<uint8_t> dyna4cols(DYNA_SETS * sd.nocolors);
+  for (int L = 0; L < DYNA_SETS; ++L)
+    for (int s = 0; s < (int)sd.nocolors; ++s)
+      dyna4cols[L * sd.nocolors + s] = (uint8_t)((L << 2) | s);
+
   for (uint32_t i = 0; i < sd.nframes; ++i) {
     // hashcodes is useIndex=true — use the new setAtIndex method
     sd.hashcodes.setAtIndex(i, &frame_hashes[i], 1);
@@ -723,11 +758,22 @@ int main(int argc, char **argv) {
     sd.cpal.set(i, frame_palettes[i].data(), PAL_BYTES);
     sd.cframes.set(i, frame_pixels[i].data(), 128 * 32);
 
-    // Masked triggers: point the frame at its compmask (shapecompmode stays 0).
+    // Masked triggers: point the frame at its compmask (shapecompmode stays 0),
+    // and wire up the dynamic region so the live score colorizes.
     // Unmasked frames leave compmaskID at its 255 default (no mask).
     if (frame_maskid[i] >= 0) {
       uint8_t id = (uint8_t)frame_maskid[i];
       sd.compmaskID.set(i, &id, 1);
+
+      // compmask_data[id][tk]: 0 = static (mask bit set, hashed), 1 = dynamic
+      // (mask bit clear — the score/timer region).  Dynamic pixels track live.
+      const auto &cm = compmask_data[id];
+      const auto &cf = frame_pixels[i];
+      std::vector<uint8_t> dyna(128 * 32, 255);  // 255 = static everywhere by default
+      for (int tk = 0; tk < 128 * 32; ++tk)
+        if (cm[tk]) dyna[tk] = (uint8_t)((cf[tk] >> 2) & 0x0F);  // VNI colour band
+      sd.dynamasks.set(i, dyna.data(), 128 * 32);
+      sd.dyna4cols.set(i, dyna4cols.data(), DYNA_SETS * sd.nocolors);
     }
   }
 

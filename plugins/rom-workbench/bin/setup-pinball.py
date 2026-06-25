@@ -71,11 +71,27 @@ REPO_ROOT = PLUGIN_ROOT.parent.parent                 # the rom-workbench checko
 # Trust-on-first-use SHA-256: an empty pin means the hash is recorded on the
 # first download and verified on subsequent runs (see download()).
 
-# Visual Pinball X. The tag and asset basename differ slightly on some releases.
-VPX_TAG = "10.8.0-2051-28dd6c3"
-VPX_WIN_ASSET = f"Developer.VPinballX-{VPX_TAG}-Release-win-x64.zip"
-VPX_MAC_ASSET_TMPL = "VPinballX_GL-10.8.0-2052-5a81d4e-Release-macos-{arch}.zip"
-VPX_BASE_URL = f"https://github.com/vpinball/vpinball/releases/download/v{VPX_TAG}"
+# Visual Pinball X.
+# macOS uses the BGFX build: it renders through Metal natively (the GL build runs
+# OpenGL-over-Metal, which crashes on Apple Silicon) and ships a coherent matched
+# libdmdutil/libserum/libpinmame set. Pinned to the v10.8.1-3788 pre-release.
+# The asset arch token is arm64 / x64 (platform.machine() gives arm64 / x86_64).
+VPX_MAC_TAG = "10.8.1-3788-2151290"
+VPX_MAC_APP = "VPinballX_BGFX.app"
+VPX_MAC_EXE = "VPinballX_BGFX"
+VPX_MAC_ASSET_TMPL = f"VPinballX_BGFX-{VPX_MAC_TAG}-macos-{{arch}}-Release.zip"
+VPX_MAC_BASE_URL = f"https://github.com/vpinball/vpinball/releases/download/v{VPX_MAC_TAG}"
+
+# Windows stays on the 10.8.0 stable GL build — the BGFX/Metal switch is a macOS
+# fix, and this Windows asset is the verified-working one.
+VPX_WIN_TAG = "10.8.0-2051-28dd6c3"
+VPX_WIN_ASSET = f"Developer.VPinballX-{VPX_WIN_TAG}-Release-win-x64.zip"
+VPX_WIN_BASE_URL = f"https://github.com/vpinball/vpinball/releases/download/v{VPX_WIN_TAG}"
+
+# The BGFX bundle ships zesinger libserum 2.2.0, which returns NULL on our v7
+# .cROMc. We swap in our ABI-identical PPUC 2.6.0 (lib/libserum.dylib) so v7
+# colorizations load. See deploy_libserum_to_bundle() / the setup SKILL.md.
+VPX_MAC_LIBSERUM = "libserum.dylib"
 
 # VPinMAME COM server (Windows). Supplies bass64.dll and the directory layout;
 # the patched VPinMAME64.dll from lib/ overlays the stock one after extraction.
@@ -83,8 +99,26 @@ PINMAME_VERSION = "3.6.0-1227-ecd032e"
 VPINMAME_WIN_ASSET = f"VPinMAME-{PINMAME_VERSION}-win-x64.zip"
 PINMAME_BASE_URL = f"https://github.com/vpinball/pinmame/releases/download/v{PINMAME_VERSION}"
 
-# Base commit the switch-recorder patches apply onto (macOS source-build fallback).
+# Base commit the FULL switch-recorder+debugger patch set applies onto. This build
+# is deployed to PINMAME_DIR and loaded *directly* by replay_host.py (not through
+# the bundle), so it carries all 5 patches (debugger + memory introspection + switch
+# recorder + fence) and is independent of the bundle's plugin ABI.
 PINMAME_BASE_COMMIT = "3ef424b0a560b08b563a345d1ecd0fa733533eef"
+
+# The VPX BGFX bundle is a matched set: its plugin-pinmame.dylib is linked against a
+# SPECIFIC libpinmame ABI, built from vbousquet/pinmame at the SHA pinned in that
+# vpinball release's platforms/config.sh (PINMAME_SHA). To record AND colorize from
+# the one bundle we must rebuild libpinmame from THAT EXACT SHA (so plugin-pinmame's
+# ~38 imports — incl. PinmameSetSoundMode/SetMsgAPI/SetTimeFence — all resolve) plus
+# ONE additive, self-contained change: the vpintf switch recorder. Deploying the
+# PINMAME_DIR build (different lineage) here instead breaks plugin load (missing
+# symbols → crash). KEEP THIS SHA IN SYNC WITH VPX_MAC_TAG: read it from
+# https://github.com/vpinball/vpinball/blob/v<VPX_MAC_TAG>/platforms/config.sh
+PINMAME_BUNDLE_SHA = "524bae7f545fc2fda7a644d8a4446e5405cc6cbd"  # for v10.8.1-3788
+PINMAME_BUNDLE_TARBALL = f"https://github.com/vbousquet/pinmame/archive/{PINMAME_BUNDLE_SHA}.tar.gz"
+# vpintf-only switch recorder (no m6809/debugger dependency) — applies on the bundle
+# SHA without dragging in the full debug toolchain, preserving plugin-pinmame's ABI.
+BUNDLE_SWITCHLOG_PATCH = PATCHES_DIR / "bundle-0001-switchlog-vpintf-only.patch"
 
 # Ghidra — the headless decompiler the `debug` skill's `ghidra` companion drives for
 # deep ROM reverse-engineering (recursive-descent disasm + C decompilation that beats
@@ -354,7 +388,7 @@ def install_vpx(root: Path, force: bool) -> "Path | None":
         if exe.exists() and not force:
             ok("VPinballX64.exe present; skipping.")
             return vpx_dir
-        zip_path = download(root, f"{VPX_BASE_URL}/{VPX_WIN_ASSET}", VPX_WIN_ASSET, force=force)
+        zip_path = download(root, f"{VPX_WIN_BASE_URL}/{VPX_WIN_ASSET}", VPX_WIN_ASSET, force=force)
         if not zip_path:
             warn("VPX download failed; replay does not require VPX. Skipping.")
             return None
@@ -368,17 +402,17 @@ def install_vpx(root: Path, force: bool) -> "Path | None":
         ok("Visual Pinball X installed.")
         return vpx_dir
 
-    # macOS
-    arch = platform.machine()  # arm64 / x86_64
-    app = vpx_dir / "VPinballX_GL.app"
-    exe = app / "Contents" / "MacOS" / "VPinballX_GL"
+    # macOS — the BGFX build (VPinballX_BGFX.app).
+    arch = "x64" if platform.machine() == "x86_64" else platform.machine()  # arm64 / x64
+    app = vpx_dir / VPX_MAC_APP
+    exe = app / "Contents" / "MacOS" / VPX_MAC_EXE
     step(f"Visual Pinball X at {vpx_dir}")
     if exe.exists() and not force:
-        ok("VPinballX_GL.app present; skipping.")
+        ok(f"{VPX_MAC_APP} present; skipping.")
         return vpx_dir
 
     asset = VPX_MAC_ASSET_TMPL.format(arch=arch)
-    zip_path = download(root, f"{VPX_BASE_URL}/{asset}", asset, force=force)
+    zip_path = download(root, f"{VPX_MAC_BASE_URL}/{asset}", asset, force=force)
     if not zip_path:
         warn(f"VPX macOS download failed — this release may lack a macos-{arch} asset.")
         warn("Skipping VPX install; replay.py does not require VPX.")
@@ -396,7 +430,7 @@ def install_vpx(root: Path, force: bool) -> "Path | None":
                 run(["hdiutil", "attach", str(dmg), "-mountpoint", mp_dir,
                      "-nobrowse", "-quiet"])
                 try:
-                    src_app = _find_app(Path(mp_dir), "VPinballX_GL.app")
+                    src_app = _find_app(Path(mp_dir), VPX_MAC_APP)
                     if src_app:
                         if app.exists():
                             shutil.rmtree(app)
@@ -405,7 +439,7 @@ def install_vpx(root: Path, force: bool) -> "Path | None":
                 finally:
                     run(["hdiutil", "detach", mp_dir, "-quiet"], check=False)
         else:
-            found = _find_app(tmp, "VPinballX_GL.app")
+            found = _find_app(tmp, VPX_MAC_APP)
             if found:
                 if app.exists():
                     shutil.rmtree(app)
@@ -413,7 +447,7 @@ def install_vpx(root: Path, force: bool) -> "Path | None":
                 src_app = app
 
     if not exe.exists():
-        warn("Extraction did not produce VPinballX_GL.app — check the asset layout.")
+        warn(f"Extraction did not produce {VPX_MAC_APP} — check the asset layout.")
         return None
     exe.chmod(0o755)
     ok(f"Visual Pinball X installed at {vpx_dir}")
@@ -527,13 +561,74 @@ def _build_libpinmame_macos(pinmame_src: Path, target: Path,
     ok("Updated lib/libpinmame.dylib from source build.")
 
 
-def deploy_dylib_to_bundle(vpx_dir: "Path | None", dylib: Path) -> None:
-    """Replace VPX's bundled libpinmame with the patched build and re-sign."""
-    step("Deploying libpinmame into Visual Pinball bundle")
+def _build_libpinmame_bundle_macos(root: Path, arch: str) -> Path:
+    """Build the bundle-ABI-matched libpinmame: bundle's pinned pinmame SHA + the
+    vpintf switch recorder, using the SHA's own upstream cmake (so the file set and
+    symbol surface match plugin-pinmame exactly). Returns the built dylib."""
+    _require_build_tools()
+    src_url = PINMAME_BUNDLE_TARBALL
+    tgz = download(root, src_url, f"pinmame-bundle-{PINMAME_BUNDLE_SHA[:12]}.tar.gz")
+    if not tgz:
+        die("Failed to download the bundle pinmame source tarball.")
+    work = cache_dir(root) / f"pinmame-bundle-{PINMAME_BUNDLE_SHA[:12]}"
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+    run(["tar", "xzf", str(tgz), "-C", str(work), "--strip-components=1"])
+    # vpintf-only switch recorder (no debugger/m6809 dependency on this lineage)
+    if not BUNDLE_SWITCHLOG_PATCH.exists():
+        die(f"Bundle switchlog patch missing: {BUNDLE_SWITCHLOG_PATCH}")
+    run(["git", "apply", "--unsafe-paths", "--directory", str(work),
+         str(BUNDLE_SWITCHLOG_PATCH)])
+    # Use the SHA's OWN libpinmame cmake (what vpinball's build copies to root) —
+    # our hand-maintained CMakeLists is for a different lineage's file set.
+    shutil.copy2(work / "cmake" / "libpinmame" / "CMakeLists.txt", work / "CMakeLists.txt")
+    build_dir = work / f"build_bundle_{arch}"
+    info(f"cmake configure bundle libpinmame (PLATFORM=macos ARCH={arch}) ...")
+    run(["cmake", "-S", str(work), "-B", str(build_dir), "-DPLATFORM=macos",
+         f"-DARCH={arch}", "-DBUILD_SHARED=ON", "-DBUILD_STATIC=OFF",
+         "-DCMAKE_BUILD_TYPE=Release", "-Wno-dev"], stdout=subprocess.DEVNULL)
+    info(f"cmake build ({os.cpu_count() or 4} jobs) ...")
+    run(["cmake", "--build", str(build_dir), "--target", "pinmame_shared",
+         "-j", str(os.cpu_count() or 4)])
+    built = next((p for p in build_dir.glob("libpinmame*.dylib")
+                  if not p.is_symlink()), None)
+    if not built:
+        die(f"libpinmame*.dylib not found under {build_dir} after build.")
+    shutil.copy2(built, LIB_DIR / "libpinmame-bundle.dylib")
+    ok("Updated lib/libpinmame-bundle.dylib from source build.")
+    return built
+
+
+def resolve_bundle_libpinmame(root: Path) -> "Path | None":
+    """The libpinmame to put INTO the VPX bundle (ABI-matched to plugin-pinmame).
+
+    Prefer the prebuilt lib/libpinmame-bundle.dylib when its arch matches; otherwise
+    build it from the bundle's pinned pinmame SHA + the vpintf switch recorder."""
+    arch = "x64" if platform.machine() == "x86_64" else platform.machine()
+    prebuilt = LIB_DIR / "libpinmame-bundle.dylib"
+    want = "x86_64" if arch == "x64" else arch
+    if prebuilt.exists() and _macho_arch(prebuilt) == want:
+        ok(f"Using prebuilt lib/libpinmame-bundle.dylib ({arch}).")
+        return prebuilt
+    if prebuilt.exists():
+        warn(f"lib/libpinmame-bundle.dylib is {_macho_arch(prebuilt) or 'unknown arch'}, "
+             f"need {want}; building from source.")
+    return _build_libpinmame_bundle_macos(root, arch)
+
+
+def deploy_dylib_to_bundle(root: Path, vpx_dir: "Path | None") -> None:
+    """Swap the bundle-ABI-matched libpinmame (bundle SHA + switch recorder) into the
+    VPX bundle and re-sign. This libpinmame both COLORIZES (plugin-pinmame loads it —
+    all ~38 imports resolve) and RECORDS (vp_switchlog → VPINMAME_SWITCHLOG). It is a
+    DIFFERENT build from the PINMAME_DIR libpinmame replay_host.py loads directly: the
+    bundle must match the bundle's plugin ABI, the replay build carries the full debug
+    toolchain. Deploying the replay build here would crash plugin load."""
+    step("Deploying bundle-matched libpinmame (record + colorize) into VPX bundle")
     search_roots = []
     if vpx_dir:
-        search_roots.append(vpx_dir / "VPinballX_GL.app")
-    search_roots.append(Path("/Applications/VPinballX_GL.app"))
+        search_roots.append(vpx_dir / VPX_MAC_APP)
+    search_roots.append(Path("/Applications") / VPX_MAC_APP)
 
     found = []
     for r in search_roots:
@@ -546,14 +641,53 @@ def deploy_dylib_to_bundle(vpx_dir: "Path | None", dylib: Path) -> None:
         warn("(replay.py only needs PINMAME_DIR; this only matters for using VPX directly.)")
         return
 
+    dylib = resolve_bundle_libpinmame(root)
+    if not dylib:
+        warn("Could not resolve a bundle-matched libpinmame — skipping bundle deploy.")
+        return
+
     for dst in found:
         backup = dst.with_suffix(dst.suffix + ".orig")
         if not backup.exists():
             shutil.copy2(dst, backup)
             ok(f"Backed up original to {backup.name}")
         shutil.copy2(dylib, dst)
-        ok(f"Patched libpinmame deployed to {dst}")
+        ok(f"Bundle-matched libpinmame deployed to {dst}")
         _resign_bundle(dst)
+
+
+def deploy_libserum_to_bundle(vpx_dir: "Path | None", libserum: Path) -> None:
+    """Swap our v7-capable libserum 2.6.0 into the VPX bundle.
+
+    The BGFX bundle ships zesinger libserum 2.2.0, which returns NULL on the v7
+    .cROMc our converter writes. Our PPUC 2.6.0 is ABI-identical to 2.2.0 (same
+    Serum_Frame_Struc layout + the symbols libdmdutil binds) but reads the v7
+    concentrate format, so colorizations load. libdmdutil links the versioned name
+    (@rpath/libserum.2.2.0.dylib), so we overwrite that exact file in place; the
+    `libserum.dylib` symlink keeps pointing at it. Copy only here — the subsequent
+    libpinmame deploy re-signs the whole Frameworks dir (which signs this too)."""
+    step("Swapping v7-capable libserum into the Visual Pinball bundle")
+    if not libserum.exists():
+        warn(f"lib/{libserum.name} not found — skipping libserum swap. v7 .cROMc "
+             "colorizations will not load in this bundle (stock libserum returns NULL).")
+        return
+    app = (vpx_dir / VPX_MAC_APP) if vpx_dir else None
+    if not app or not app.exists():
+        warn("VPX bundle not found — skipping libserum swap.")
+        return
+    fw = app / "Contents" / "Frameworks"
+    targets = [p for p in fw.glob("libserum*.dylib")
+               if p.is_file() and not p.is_symlink() and not p.name.endswith(".orig")]
+    if not targets:
+        warn(f"No libserum*.dylib found under {fw} — skipping swap.")
+        return
+    for dst in targets:
+        backup = dst.with_suffix(dst.suffix + ".orig")
+        if not backup.exists():
+            shutil.copy2(dst, backup)
+            ok(f"Backed up original to {backup.name}")
+        shutil.copy2(libserum, dst)
+        ok(f"v7-capable libserum deployed to {dst}")
 
 
 def _resign_bundle(dylib_path: Path) -> None:
@@ -569,10 +703,10 @@ def _resign_bundle(dylib_path: Path) -> None:
                           capture_output=True).returncode != 0:
             warn(f"Could not sign {f.name}")
             errors += 1
-    exe = app / "Contents" / "MacOS" / "VPinballX_GL"
+    exe = app / "Contents" / "MacOS" / VPX_MAC_EXE
     if subprocess.run(["codesign", "--force", "--sign", "-", str(exe)],
                       capture_output=True).returncode != 0:
-        warn("Could not sign VPinballX_GL executable.")
+        warn(f"Could not sign {VPX_MAC_EXE} executable.")
     if subprocess.run(["codesign", "--force", "--sign", "-", str(app)],
                       capture_output=True).returncode == 0:
         ok(f"Bundle re-signed: {app}")
@@ -586,7 +720,7 @@ def _resign_bundle(dylib_path: Path) -> None:
 def gatekeeper_check(vpx_dir: "Path | None") -> None:
     if not vpx_dir:
         return
-    exe = vpx_dir / "VPinballX_GL.app" / "Contents" / "MacOS" / "VPinballX_GL"
+    exe = vpx_dir / VPX_MAC_APP / "Contents" / "MacOS" / VPX_MAC_EXE
     if not exe.exists():
         return
     step("Testing VPX launch (Gatekeeper check)")
@@ -615,7 +749,7 @@ def gatekeeper_check(vpx_dir: "Path | None") -> None:
     print("\n    macOS blocked the app because we replaced a dylib inside the")
     print("    notarised bundle. Allow it once:\n")
     print("      System Settings → Privacy & Security → Security")
-    print("      → find 'VPinballX_GL was blocked' and click 'Open Anyway'\n")
+    print(f"      → find '{VPX_MAC_EXE} was blocked' and click 'Open Anyway'\n")
     subprocess.run(["open",
                     "x-apple.systempreferences:com.apple.preference.security?General"],
                    check=False)
@@ -829,6 +963,36 @@ def install_ghidra(root: Path, force: bool) -> "Path | None":
 
 
 # =============================================================================
+# ffmpeg (DMD video render — optional, for scripts/render_colorized.py)
+# =============================================================================
+
+def ensure_ffmpeg() -> "str | None":
+    """Make ffmpeg available; returns its path or None. Used by the colorize
+    workflow's DMD video renderer (scripts/render_colorized.py muxes colorized
+    frames into mp4). OPTIONAL — record/replay/build/colorize don't need it, and a
+    failure here never blocks the rest of setup. On macOS we install via Homebrew;
+    elsewhere we only print an install hint (no fragile static-build download)."""
+    step("ffmpeg (DMD video render — optional)")
+    existing = shutil.which("ffmpeg")
+    if existing:
+        ok(f"ffmpeg present at {existing}.")
+        return existing
+    if IS_MAC and shutil.which("brew"):
+        info("Installing ffmpeg via Homebrew ...")
+        if subprocess.run(["brew", "install", "ffmpeg"]).returncode == 0 and shutil.which("ffmpeg"):
+            ok(f"ffmpeg installed at {shutil.which('ffmpeg')}.")
+            return shutil.which("ffmpeg")
+        warn("`brew install ffmpeg` failed — install it manually for DMD video render.")
+        return None
+    hint = ("winget install Gyan.FFmpeg  (or `choco install ffmpeg`)" if IS_WIN
+            else "brew install ffmpeg" if IS_MAC
+            else "install ffmpeg via your package manager (e.g. `apt install ffmpeg`)")
+    warn(f"ffmpeg not found and not auto-installed here — run: {hint}")
+    warn("(Only scripts/render_colorized.py needs it; everything else works without.)")
+    return None
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -882,7 +1046,11 @@ def main() -> int:
             else (root / "pinmame")
         if IS_MAC:
             persist("PINMAME_DIR", str(pinmame_dir))
-            deploy_dylib_to_bundle(vpx_dir, pinmame_dir / "libpinmame.dylib")
+            # Swap our v7-capable libserum in first (copy only), then deploy the
+            # patched libpinmame — that step re-signs the whole Frameworks dir, so
+            # one re-sign covers both swapped dylibs.
+            deploy_libserum_to_bundle(vpx_dir, LIB_DIR / VPX_MAC_LIBSERUM)
+            deploy_dylib_to_bundle(root, vpx_dir)
             gatekeeper_check(vpx_dir)
 
     # Ghidra is cross-platform (one Java zip for every OS) and optional — install it
@@ -890,6 +1058,10 @@ def main() -> int:
     ghidra_dir = install_ghidra(root, args.force)
     if ghidra_dir:
         persist("GHIDRA_DIR", str(ghidra_dir))
+
+    # ffmpeg — optional, for the colorize DMD-video renderer. On PATH, not under the
+    # data dir, so it isn't persisted; non-fatal if unavailable.
+    ffmpeg_path = ensure_ffmpeg()
 
     cfg_path = write_config(config) if config else None
 
@@ -906,6 +1078,8 @@ def main() -> int:
     print(f"  venv python   = {venv_python(root)}")
     if ghidra_dir:
         print(f"  GHIDRA_DIR    = {ghidra_dir}")
+    if ffmpeg_path:
+        print(f"  ffmpeg        = {ffmpeg_path}")
     if cfg_path:
         print(f"  config        = {cfg_path}")
     print()

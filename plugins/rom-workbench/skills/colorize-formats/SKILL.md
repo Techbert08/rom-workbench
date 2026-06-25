@@ -31,9 +31,20 @@ Offset table at byte 8 (`num_anims × uint32`). Each animation: name, 16 depreca
 bytes, frame count, embedded palette (ignore — use PAL palette), w/h (128×32),
 per-anim masks, then frames. Each frame: `int16` plane_size, `uint16` delay,
 `uint32` hash (often 0/unused), `uint8` bit_depth(7), `uint8` compressed flag;
-data is 7 bit-planes, optionally heatshrink (window=10, lookahead=5).
-Pixel decode: 7 planes → 0–127. Bit 6 set ⇒ colorized (low 6 bits = palette
-index); bit 6 clear ⇒ passthrough (original shade preserved).
+data is `bit_depth` planes, optionally heatshrink (window=10, lookahead=5).
+**Each plane is prefixed by a 1-byte marker, and the layout is NOT a flat
+7-bit value (this was wrong before 2026-06-24).** Per PPUC/libvni `read_planes`:
+a "7-plane" frame = **6 colour-index planes (markers `0x00`–`0x05`) + 1 MASK
+plane (marker `0x6d` 'm')**. The mask plane is **excluded from the colour index**
+(libvni stores it in `frame.mask`); each data plane goes to bit = its marker, so
+the index is **0–63** and matches the 64-colour PAL palette exactly. In LOTR the
+`0x6d` mask plane is always stored **first**, so the naive "all 7 planes by read
+order, then `& 0x3F`" decode folds the mask into bit 0, shifts the real index up,
+and drops the top index plane — corrupting ~99% of colorised pixels (the symptom:
+"palette looks wrong"). Decode by marker; skip `0x6d`. (The old "bit 6 =
+colorize flag / bit 6 clear = passthrough" model was a misreading of the mask
+plane.) Compressed frames carry the same `[marker][plane]…` layout *inside* the
+decompressed stream — strip markers there too, don't treat the blob as flat planes.
 **Plane bit order for display is MSB-first** (bit 7 = leftmost pixel): decoding
 LSB-first produces horizontally-mirrored frames — a real output bug if you ship
 it, since `cframes` drives the spatial colorized output.
@@ -46,6 +57,25 @@ cereal `PortableBinaryArchive` of `SerumData`. Key V1 fields: `nocolors=4`
 `hashcodes` (useIndex=true, write via `setAtIndex`), `cpal` (192 B/frame),
 `cframes` (4096 B/frame), `compmasks`/`compmaskID`/`shapecompmode`/`ncompmasks`
 for masked triggers. compmaskID default 255 = no mask; shapecompmode default 0.
+
+**Dynamic-region colorization (the live score — REQUIRED for ColorMask/LCM, added
+2026-06-24).** A masked frame has two regions: the *static* region (the masked
+background, coloured by `cframes`) and the *dynamic* region (score/timers — the
+pixels the mask leaves out of the trigger hash) which must track the **live** DMD,
+not a frozen frame. `cframes` alone freezes everything → the score sticks at the
+authored value (looked like "scores always 0"). libserum V1 (`Colorize_Framev1`)
+renders a pixel as `cpal[ dyna4cols[ dynamasks[tk]*nocolors + live_shade ] ]` when
+`dynamasks[tk] != 255`. Mirror libvni's `render_color_mask` (output = live low
+bits | colorist's high bits): emit per masked frame
+- `dynamasks[tk]` = `(cframe[tk] >> 2) & 0xF` where the pixel is **dynamic**
+  (compmask==1, i.e. mask-clear), else **255** (static → keep `cframes`);
+- `dyna4cols[L*nocolors + s]` = `(L<<2) | s` (constant; re-inserts the live shade
+  in the low 2 bits). `MAX_DYNA_4COLS_PER_FRAME=16` covers the 4 high bits.
+`frameHasDynamic` / `dynamasks_active` are **derived at load** (active where
+`dynamasks != 255`) — don't set them. This also retires the old wrong conclusion
+that "frame-0-only is correct for ColorMask by design": the *static* region is
+frame-0 (animation continuations don't help it), but the *dynamic* region needs
+this dyna machinery to follow the live frame.
 
 ## The trigger-hash schemes (reverse-engineered empirically)
 
@@ -61,6 +91,16 @@ PIN2DMD computes its PAL trigger CRC over a **bit-plane**, not the per-pixel fra
 
 These were found by hashing real captured RAW frames every which way and seeing
 which scheme hit the PAL CRC set far above chance.
+
+**Colorization survives CPU/rules mods (capture once, play modded).** On games whose
+DMD is rendered by a *separate* controller (Stern Whitestar/SAM, WPC DMD board), the
+frame bitmaps come from the display ROM, not the main CPU. A gameplay/rules mod that
+only swaps the main CPU ROM (e.g. LOTR `lotrcpua.a00`) leaves the display ROM
+(`lotrdspa.a00` + `bios.u8`) byte-identical, so the same screens produce the same
+frame CRCs and the colorization triggers still fire. Verify by comparing the display
+ROM CRC across zips (`unzip -v`); if it matches factory, you can capture against the
+factory ROM and play the modded ROM with full colorization. (New screens the mod adds
+won't be coloured until captured, but everything shared with factory is.)
 
 ## Why a bridge is mandatory (the core insight)
 
@@ -122,9 +162,20 @@ per-pixel values; the silhouette route sidesteps this.)
 
 - **Version pin:** VPX bundles libserum **2.6.0** built from PPUC/libserum (same
   distinctive log strings). `pac2serum` pins PPUC tag v2.6.0 (commit `21b28325`)
-  via FetchContent + an additive `setAtIndex` patch, so the cereal layout matches
-  byte-for-byte. Build from source (not the .dylib — it exports only the C API,
-  not `SerumData::SaveToFile`).
+  via FetchContent + two patches: `0001` additive `setAtIndex` (writer; cereal layout
+  stays byte-for-byte) and `0002` `maxFramesToSkip=20` default. The build also emits
+  the runtime `lib/libserum.dylib` (`serum_shared` target) from the same sources — the
+  writer (`serum_static`→pac2serum) and the deployed reader stay in lockstep.
+- **Uncolorized-frame passthrough:** on a frame with no trigger match, libserum holds
+  the last colorized frame and returns `IDENTIFY_NO_FRAME` *unless* `maxFramesToSkip`
+  or `ignoreUnknownFramesTimeout` is set — then after the threshold it applies the
+  standard grayscale palette and returns 0 (passthrough to the original DMD). Both
+  default to **0 upstream** (= freeze forever), and the BGFX `plugin-serum` never sets
+  them, so patch `0002` defaults `maxFramesToSkip=20`: ~20 unmatched frames bridges
+  brief intra-animation gaps, then a genuinely uncolorized screen shows through. Tune
+  in `vendor/patches/0002-passthrough-unknown-frames.patch`. (Note: the
+  `ignoreUnknownFramesTimeout` path gets overwritten to 0x2000 when `showStatusMessages`
+  triggers — that's why we use the frame-count lever, not the timeout.)
 - **API gotcha:** `Serum_ColorizeWithMetadatav2(frame, bool sceneRequested)` —
   output goes into the `Serum_Frame_Struc*` returned by `Serum_Load`, NOT via
   out-params. For testing call the clean 1-arg `Serum_Colorize(frame)` and read

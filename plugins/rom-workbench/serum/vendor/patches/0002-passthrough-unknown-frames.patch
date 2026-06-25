@@ -1,0 +1,20 @@
+diff --git a/src/serum-decode.cpp b/src/serum-decode.cpp
+index 33471c5..f064f25 100644
+--- a/src/serum-decode.cpp
++++ b/src/serum-decode.cpp
+@@ -605,7 +605,14 @@ bool crc32_ready = false;   // is the crc32 table filled?
+ uint32_t crc32_table[256];  // initial table
+ bool* framechecked = NULL;  // are these frames checked?
+ uint16_t ignoreUnknownFramesTimeout = 0;
+-uint8_t maxFramesToSkip = 0;
++// Default non-zero so UNCOLORIZED screens pass through (show the original DMD)
++// instead of freezing on the last colorized frame. Upstream defaults to 0 and
++// relies on the host to call Serum_SetMaximumUnknownFramesToSkip; the VPX BGFX
++// plugin-serum never does, so without this default a frame with no trigger match
++// hangs forever. 20 frames bridges brief intra-animation gaps yet passes through
++// a genuinely uncolorized screen in a fraction of a second. (Tunable: rom-workbench
++// vendor/patches/0002-passthrough-unknown-frames.patch.)
++uint8_t maxFramesToSkip = 20;
+ uint8_t framesSkippedCounter = 0;
+ uint8_t standardPalette[PALETTE_SIZE];
+ uint8_t standardPaletteLength = 0;
