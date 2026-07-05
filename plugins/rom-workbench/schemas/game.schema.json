@@ -30,6 +30,10 @@
             "type": "string",
             "description": "Whitestar only: hex string for the game-RAM address mirroring the $3200 ROM-bank register (e.g. \"0x0243\", verified for LOTR). Used by replay.py/replay_host.py to resolve banked PCs in dbg/interactive. Ignored under platform 'wpc'."
         },
+        "checksum_blank": {
+            "type": "string",
+            "description": "Whitestar only. Default for build.py's --checksum-blank: address (build.py address syntax) of a confirmed-blank (0xFF), patch-untouched byte used as the checksum-correction pad, instead of build.py's default backward-scan-from-$FFEC. Pins the correction to an explicit, disassembly-verified free-space location rather than an implicit runtime choice. An explicit --checksum-blank CLI flag overrides this."
+        },
         "table": {
             "type": "string",
             "description": "Path (relative to the project root) to the .vpx table used for recording."

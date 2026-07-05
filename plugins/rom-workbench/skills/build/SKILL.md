@@ -133,9 +133,30 @@ and requires the total to be `0xFF`; alternatively, if the word at `$FFEE` is
 `0xFFFF` the test is skipped. So:
 
 - **Real checksum** (default): make `(sum of all bytes) & 0xFF == 0xFF`. `build.py`
-  absorbs the patch's effect into one unused `0xFF` padding byte (chosen below
-  `$FFEC`, clear of the checksum word / delta slot / 6809 vectors). No-op if the
-  sum is already correct.
+  absorbs the patch's effect into one unused `0xFF` padding byte (auto-found by
+  scanning backward from `$FFEC`, clear of the checksum word / delta slot / 6809
+  vectors). No-op if the sum is already correct.
+- **`--checksum-blank <addr>`**: use an *explicit*, disassembly-verified free-byte
+  address instead of the auto-scan — e.g. `--checksum-blank '$F974'`. Since the
+  self-test wraps mod 256, one byte always suffices no matter how much the
+  patches shift the sum (the pad byte's value just gets set to whatever residue
+  is needed). Useful for real/replacement CPU boards that re-run this same
+  8-bit self-test independently: pinning the correction to a known location
+  (ideally one already reserved as spare space by your patch, e.g. right after
+  a code stub) makes the build deterministic and reviewable instead of an
+  implicit runtime choice. Set a per-project default via `game.json`'s
+  `checksum_blank` key so it applies to every build without repeating the flag
+  (an explicit `--checksum-blank` still overrides it). Mutually exclusive with
+  `--disable-checksum`.
+  > **Not for restoring the exact factory byte-sum.** The self-test only checks
+  > the sum mod 256; it does not — and cannot — restore the *exact* pre-patch
+  > total. That's mathematically impossible once a patch replaces part of the
+  > `0xFF` free-space run with real code: `0xFF` is the maximum byte value, so
+  > the pad byte (also originally `0xFF`) can only be *lowered*, never raised,
+  > and can't compensate for the sum decrease from writing lower-valued opcode
+  > bytes elsewhere. If a board needs more than the documented mod-256 check
+  > (e.g. an independent CRC/hash of the whole ROM), no filler-byte trick can
+  > satisfy it — the ROM's content has genuinely changed.
 - **Disabled** (`--disable-checksum`): writes `0xFFFF` at `$FFEE`.
 
 (Whitestar uses a single 8-bit byte-sum target — there is no WPC-style delta word.
@@ -150,6 +171,7 @@ and requires the total to be `0xFF`; alternatively, if the word at `$FFEE` is
 | `--patch-dir` | `./source/patches` | Directory of `*.json` patch specs |
 | `--out-zip` | `./dist/<stem>_modded.zip` | Output zip |
 | `--disable-checksum` | off | Write `0x00FF` at `$FFEC` instead of recalculating |
+| `--checksum-blank` | auto-scan | Whitestar: explicit free-byte address for the checksum pad (default in `game.json`'s `checksum_blank`) |
 | `--deploy` | off | Copy output into VP's `roms/` dir |
 | `--force` | off | Overwrite existing output zip |
 

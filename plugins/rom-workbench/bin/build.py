@@ -223,11 +223,23 @@ def disable_checksum(rom: bytearray) -> None:
 WHITESTAR_CKSUM_TARGET = 0xFF  # required value of (sum of all bytes) & 0xFF
 
 
-def whitestar_update_checksum(rom: bytearray) -> None:
+def whitestar_update_checksum(rom: bytearray, blank_addr: Optional[int] = None) -> None:
     """Make the 8-bit byte-sum of the ROM equal 0xFF by tweaking one pad byte.
 
     Absorbs the patch's effect on the sum into a single unused (0xFF) padding
-    byte so no real code/data changes. No-op if the sum is already correct."""
+    byte so no real code/data changes. No-op if the sum is already correct.
+
+    By default the pad byte is auto-found by scanning backward from $FFEC for
+    the nearest 0xFF byte. Pass `blank_addr` (from --checksum-blank / the
+    game.json 'checksum_blank' default) to use an explicit, disassembly-verified
+    free-space address instead — e.g. for boards that re-run this same 8-bit
+    self-test independently and where a predictable, version-controlled filler
+    location is preferred over an implicit runtime scan. Because this is a
+    single 8-bit accumulator wrapping mod 256, ONE byte always suffices to hit
+    any required residue, however large the patches' effect on the sum — unlike
+    an exact (non-modular) total match, which is impossible to restore from
+    spare 0xFF bytes once real code has replaced some of them (0xFF is the max
+    byte value, so a spare byte can only lower the sum, never raise it)."""
     s = sum(rom) & 0xFF
     if s == WHITESTAR_CKSUM_TARGET:
         ok(f"Checksum: 8-bit sum already 0x{s:02X}  [OK, no fixup needed]")
@@ -235,20 +247,28 @@ def whitestar_update_checksum(rom: bytearray) -> None:
     # Changing a byte currently 0xFF to v shifts the sum by (v - 0xFF); pick v so
     # the total lands on 0xFF:  v = (0xFE - s) & 0xFF.
     v = (0xFE - s) & 0xFF
-    # Find a trailing 0xFF padding byte to use as the adjuster. Stay below $FFEC
-    # so we never touch the checksum word ($FFEE), the WPC-style delta slot
-    # ($FFEC), or the 6809 vectors ($FFF0-$FFFF) — keeps the stored checksum
-    # word stable and can't accidentally form the $FFFF "disabled" sentinel.
-    sys_base = len(rom) - SYS_SIZE
-    vec_off = sys_base + (0xFFEC - 0x8000)
-    pad_off = None
-    for off in range(min(vec_off, len(rom)) - 1, -1, -1):
-        if rom[off] == 0xFF:
-            pad_off = off
-            break
-    if pad_off is None:
-        die("Whitestar checksum: no spare 0xFF padding byte found to absorb the "
-            "correction. Free a byte or pass --disable-checksum.")
+    if blank_addr is not None:
+        pad_off = blank_addr
+        if rom[pad_off] != 0xFF:
+            die(f"--checksum-blank @ 0x{pad_off:05X}: expected 0xFF (free space), "
+                f"found 0x{rom[pad_off]:02X}. It was touched by a patch, or isn't "
+                "actually free — pick a genuine blank/0xFF location.")
+    else:
+        # Find a trailing 0xFF padding byte to use as the adjuster. Stay below
+        # $FFEC so we never touch the checksum word ($FFEE), the WPC-style delta
+        # slot ($FFEC), or the 6809 vectors ($FFF0-$FFFF) — keeps the stored
+        # checksum word stable and can't accidentally form the $FFFF "disabled"
+        # sentinel.
+        sys_base = len(rom) - SYS_SIZE
+        vec_off = sys_base + (0xFFEC - 0x8000)
+        pad_off = None
+        for off in range(min(vec_off, len(rom)) - 1, -1, -1):
+            if rom[off] == 0xFF:
+                pad_off = off
+                break
+        if pad_off is None:
+            die("Whitestar checksum: no spare 0xFF padding byte found to absorb the "
+                "correction. Free a byte or pass --disable-checksum.")
     rom[pad_off] = v
     verify = sum(rom) & 0xFF
     if verify != WHITESTAR_CKSUM_TARGET:
@@ -325,6 +345,17 @@ def main() -> int:
                     help="Output zip. Default: ./dist/<rom-stem>_modded.zip.")
     ap.add_argument("--disable-checksum", action="store_true",
                     help="Write delta=0x00FF instead of recomputing the real checksum.")
+    ap.add_argument("--checksum-blank", default=None,
+                    help="Whitestar only: address of a known-blank (0xFF), "
+                         "patch-untouched byte to use as the checksum pad, instead "
+                         "of build.py's default backward-scan-from-$FFEC. Use this "
+                         "to pin the correction to an explicit, disassembly-"
+                         "verified free-space location (e.g. \"$F974\") rather than "
+                         "an implicit runtime choice. The 8-bit self-test wraps mod "
+                         "256, so one byte always suffices regardless of how much "
+                         "the patches shift the sum. Overrides game.json's "
+                         "'checksum_blank' if both are set. Mutually exclusive with "
+                         "--disable-checksum.")
     ap.add_argument("--deploy", action="store_true",
                     help="Copy the output zip into VP's roms/ dir for immediate testing.")
     ap.add_argument("--force", action="store_true",
@@ -419,12 +450,18 @@ def main() -> int:
     # --- Update checksum (platform-specific) ---------------------------------
     manifest = load_game_manifest()
     platform = (manifest or {}).get("platform", "wpc").lower()
+    blank_spec = args.checksum_blank or (manifest or {}).get("checksum_blank")
     step(f"Checksum (platform={platform})")
+    if args.disable_checksum and blank_spec:
+        die("--disable-checksum and --checksum-blank are mutually exclusive.")
+    if blank_spec and platform != "whitestar":
+        die("--checksum-blank is currently only implemented for platform=whitestar.")
     if platform == "whitestar":
         if args.disable_checksum:
             whitestar_disable_checksum(rom)
         else:
-            whitestar_update_checksum(rom)
+            blank_addr = resolve_address(rom, blank_spec) if blank_spec else None
+            whitestar_update_checksum(rom, blank_addr)
     else:
         if args.disable_checksum:
             disable_checksum(rom)
