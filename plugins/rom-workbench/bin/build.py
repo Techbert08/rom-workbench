@@ -215,67 +215,120 @@ def disable_checksum(rom: bytearray) -> None:
 # the 8-bit sum of the ENTIRE CPU ROM. It then:
 #     LDX $FFEE ; CMPX #$FFFF ; BEQ pass   ; word $FFEE == $FFFF -> skip the test
 #     CMPB #$FF ; BEQ pass                 ; else the 8-bit byte-sum must be $FF
-# So: a correct ROM has (sum of all bytes) & 0xFF == 0xFF, and writing $FFFF at
-# $FFEE disables the check entirely. (Verified: the factory lotrcpua.a00 sums to
-# 0xFF, and $FFEE = 0x84FF -> enforced.) This is unrelated to the WPC delta-word
-# scheme above. See lotr notes/21.
+# So the game's OWN boot code only enforces (sum of all bytes) & 0xFF == 0xFF,
+# and writing $FFFF at $FFEE disables the check entirely. That is all PinMAME
+# ever exercises. BUT the factory ROM also satisfies a stronger, deliberate
+# invariant that the boot code does not itself verify:
+#     (16-bit sum of ALL bytes) & 0xFFFF == the stored word at $FFEE   (0x84FF)
+# i.e. $FFEE holds the *full* 16-bit ROM sum, not just a disable flag. The boot
+# test ignores the high byte, but a real board's BIOS / service-menu ROM check
+# is very likely to recompute the 16-bit sum and compare it to that stored word
+# ($FFEE is also read for display by the diagnostics routine $4E66@p3D). An
+# 8-bit-only fixup leaves the 16-bit sum wrong (mismatching $FFEE) and would
+# fail such a check on hardware even though it boots in PinMAME.
+#
+# So we restore the FULL 16-bit sum to equal the stored $FFEE word, keeping
+# $FFEE byte-identical to factory. Matching the 16-bit target automatically
+# makes the low byte (== the 8-bit sum) correct too, since the factory word's
+# low byte is 0xFF. The sum is mod 2^16, so even when the patch *lowered* it
+# (and our only free bytes are 0xFF, which can only lower it further) we reach
+# any target by lowering to WRAP AROUND: reduce by R = (cur - target) & 0xFFFF,
+# spread across ceil(R/255) spare 0xFF bytes (each absorbs up to 255). Worst
+# case needs <=258 bytes. This is unrelated to the WPC delta-word scheme above.
+# See lotr notes/21.
 
-WHITESTAR_CKSUM_TARGET = 0xFF  # required value of (sum of all bytes) & 0xFF
+WHITESTAR_CKSUM_TARGET = 0xFF  # required value of (sum of all bytes) & 0xFF (8-bit boot test)
+
+
+def _whitestar_pad_run(rom: bytearray, needed: int, blank_addr: Optional[int],
+                       vec_off: int) -> List[int]:
+    """Return `needed` file offsets of spare 0xFF pad bytes, all below $FFEC.
+
+    Never touches the checksum word ($FFEE), the WPC-style delta slot ($FFEC),
+    or the 6809 vectors ($FFF0-$FFFF), so the stored checksum word stays stable
+    and we can't accidentally form the $FFFF "disabled" sentinel."""
+    if blank_addr is not None:
+        # Explicit region: consume `needed` CONTIGUOUS 0xFF bytes forward from
+        # blank_addr. Guard the range so an out-of-range or vector-region address
+        # can't corrupt $FFEC-$FFFF (the auto path already stays below $FFEC).
+        end = blank_addr + needed
+        if blank_addr < 0 or end > vec_off:
+            die(f"--checksum-blank @ 0x{blank_addr:05X}: the {needed}-byte pad run "
+                f"(through 0x{end - 1:05X}) must lie in [0, 0x{vec_off:05X}) — below "
+                "$FFEC, clear of the checksum word and 6809 vectors. Pick an earlier "
+                "free-space start or shrink the patch.")
+        offs = list(range(blank_addr, end))
+        bad = [o for o in offs if rom[o] != 0xFF]
+        if bad:
+            die(f"--checksum-blank @ 0x{blank_addr:05X}: need {needed} contiguous 0xFF "
+                f"bytes but 0x{bad[0]:05X} = 0x{rom[bad[0]]:02X}. It was touched by a "
+                "patch, or the free run is too short — pick a genuine blank region.")
+        return offs
+    # Auto: gather `needed` spare 0xFF bytes scanning backward from just below
+    # $FFEC (non-contiguous is fine — position doesn't matter to a byte-sum).
+    offs: List[int] = []
+    for off in range(min(vec_off, len(rom)) - 1, -1, -1):
+        if rom[off] == 0xFF:
+            offs.append(off)
+            if len(offs) == needed:
+                return offs
+    die(f"Whitestar checksum: need {needed} spare 0xFF pad byte(s) to absorb the "
+        f"correction but found only {len(offs)}. Free space, pass an explicit "
+        "--checksum-blank region, or use --disable-checksum.")
 
 
 def whitestar_update_checksum(rom: bytearray, blank_addr: Optional[int] = None) -> None:
-    """Make the 8-bit byte-sum of the ROM equal 0xFF by tweaking one pad byte.
+    """Restore the ROM's 16-bit byte-sum to equal the stored $FFEE word.
 
-    Absorbs the patch's effect on the sum into a single unused (0xFF) padding
-    byte so no real code/data changes. No-op if the sum is already correct.
+    Absorbs the patch's effect on the sum into unused 0xFF padding bytes so no
+    real code/data changes, and leaves $FFEE byte-identical to factory. This
+    satisfies BOTH the game's 8-bit boot test (low byte == 0xFF) and a hardware
+    16-bit authenticator (full sum == stored word). No-op if already correct.
 
-    By default the pad byte is auto-found by scanning backward from $FFEC for
-    the nearest 0xFF byte. Pass `blank_addr` (from --checksum-blank / the
-    game.json 'checksum_blank' default) to use an explicit, disassembly-verified
-    free-space address instead — e.g. for boards that re-run this same 8-bit
-    self-test independently and where a predictable, version-controlled filler
-    location is preferred over an implicit runtime scan. Because this is a
-    single 8-bit accumulator wrapping mod 256, ONE byte always suffices to hit
-    any required residue, however large the patches' effect on the sum — unlike
-    an exact (non-modular) total match, which is impossible to restore from
-    spare 0xFF bytes once real code has replaced some of them (0xFF is the max
-    byte value, so a spare byte can only lower the sum, never raise it)."""
-    s = sum(rom) & 0xFF
-    if s == WHITESTAR_CKSUM_TARGET:
-        ok(f"Checksum: 8-bit sum already 0x{s:02X}  [OK, no fixup needed]")
+    `blank_addr` (from --checksum-blank / game.json 'checksum_blank') pins the
+    pad to an explicit, disassembly-verified free-space REGION start; the fixup
+    consumes as many contiguous 0xFF bytes forward as the correction needs
+    (typically a few, up to 258 worst case). Without it, spare 0xFF bytes are
+    auto-gathered scanning backward from $FFEC."""
+    sys_base = len(rom) - SYS_SIZE
+    vec_off = sys_base + (0xFFEC - 0x8000)
+    word_off = sys_base + (0xFFEE - 0x8000)
+    target = (rom[word_off] << 8) | rom[word_off + 1]
+
+    if target == 0xFFFF:
+        # Boot self-test is disabled by the $FFFF sentinel; nothing to enforce.
+        warn("Checksum: stored $FFEE = 0xFFFF (self-test disabled) — no fixup done.")
         return
-    # Changing a byte currently 0xFF to v shifts the sum by (v - 0xFF); pick v so
-    # the total lands on 0xFF:  v = (0xFE - s) & 0xFF.
-    v = (0xFE - s) & 0xFF
-    if blank_addr is not None:
-        pad_off = blank_addr
-        if rom[pad_off] != 0xFF:
-            die(f"--checksum-blank @ 0x{pad_off:05X}: expected 0xFF (free space), "
-                f"found 0x{rom[pad_off]:02X}. It was touched by a patch, or isn't "
-                "actually free — pick a genuine blank/0xFF location.")
-    else:
-        # Find a trailing 0xFF padding byte to use as the adjuster. Stay below
-        # $FFEC so we never touch the checksum word ($FFEE), the WPC-style delta
-        # slot ($FFEC), or the 6809 vectors ($FFF0-$FFFF) — keeps the stored
-        # checksum word stable and can't accidentally form the $FFFF "disabled"
-        # sentinel.
-        sys_base = len(rom) - SYS_SIZE
-        vec_off = sys_base + (0xFFEC - 0x8000)
-        pad_off = None
-        for off in range(min(vec_off, len(rom)) - 1, -1, -1):
-            if rom[off] == 0xFF:
-                pad_off = off
-                break
-        if pad_off is None:
-            die("Whitestar checksum: no spare 0xFF padding byte found to absorb the "
-                "correction. Free a byte or pass --disable-checksum.")
-    rom[pad_off] = v
-    verify = sum(rom) & 0xFF
-    if verify != WHITESTAR_CKSUM_TARGET:
-        die(f"Whitestar checksum verify failed: got 0x{verify:02X}, "
-            f"want 0x{WHITESTAR_CKSUM_TARGET:02X}.")
-    ok(f"Checksum: 8-bit sum -> 0x{verify:02X} via pad byte @ 0x{pad_off:05X} "
-       f"(0xFF -> 0x{v:02X})  [OK]")
+    if target & 0xFF != WHITESTAR_CKSUM_TARGET:
+        die(f"Checksum: stored $FFEE = 0x{target:04X} has low byte "
+            f"0x{target & 0xFF:02X} != 0x{WHITESTAR_CKSUM_TARGET:02X}; the 8-bit boot "
+            "test and the 16-bit word disagree. This ROM's stored word looks wrong — "
+            "refusing to guess. Use --disable-checksum if intentional.")
+
+    cur = sum(rom) & 0xFFFF
+    if cur == target:
+        ok(f"Checksum: 16-bit sum already 0x{cur:04X} == stored $FFEE  [OK, no fixup]")
+        return
+
+    # Lower the sum by R (wrapping mod 2^16) to hit the target. Each 0xFF pad
+    # byte can absorb up to 255 of the reduction (0xFF -> 0x00).
+    r = (cur - target) & 0xFFFF
+    n_full, rem = divmod(r, 0xFF)
+    needed = n_full + (1 if rem else 0)
+    offs = _whitestar_pad_run(rom, needed, blank_addr, vec_off)
+
+    for i, off in enumerate(offs):
+        sub = 0xFF if i < n_full else rem     # last (partial) byte carries the remainder
+        rom[off] = 0xFF - sub
+
+    verify = sum(rom) & 0xFFFF
+    if verify != target:
+        die(f"Whitestar checksum verify failed: 16-bit sum 0x{verify:04X} != stored "
+            f"word 0x{target:04X}.")
+    lo, hi = min(offs), max(offs)
+    ok(f"Checksum: 16-bit sum -> 0x{verify:04X} == stored $FFEE (8-bit 0x{verify & 0xFF:02X}) "
+       f"via {needed} pad byte(s) @ 0x{lo:05X}"
+       f"{f'-0x{hi:05X}' if needed > 1 else ''}  [OK]")
 
 
 def whitestar_disable_checksum(rom: bytearray) -> None:
@@ -346,16 +399,17 @@ def main() -> int:
     ap.add_argument("--disable-checksum", action="store_true",
                     help="Write delta=0x00FF instead of recomputing the real checksum.")
     ap.add_argument("--checksum-blank", default=None,
-                    help="Whitestar only: address of a known-blank (0xFF), "
-                         "patch-untouched byte to use as the checksum pad, instead "
-                         "of build.py's default backward-scan-from-$FFEC. Use this "
-                         "to pin the correction to an explicit, disassembly-"
-                         "verified free-space location (e.g. \"$F974\") rather than "
-                         "an implicit runtime choice. The 8-bit self-test wraps mod "
-                         "256, so one byte always suffices regardless of how much "
-                         "the patches shift the sum. Overrides game.json's "
-                         "'checksum_blank' if both are set. Mutually exclusive with "
-                         "--disable-checksum.")
+                    help="Whitestar only: START address of a known-blank (0xFF), "
+                         "patch-untouched free-space REGION used as the checksum "
+                         "pad, instead of build.py's default backward-scan-from-"
+                         "$FFEC. Pins the correction to an explicit, disassembly-"
+                         "verified location (e.g. \"$F974\") rather than an implicit "
+                         "runtime choice. The fixup restores the full 16-bit ROM sum "
+                         "to the stored $FFEE word, consuming as many contiguous "
+                         "0xFF bytes forward as needed (a few typically, <=258 worst "
+                         "case), so ensure the run is long enough. Overrides "
+                         "game.json's 'checksum_blank' if both are set. Mutually "
+                         "exclusive with --disable-checksum.")
     ap.add_argument("--deploy", action="store_true",
                     help="Copy the output zip into VP's roms/ dir for immediate testing.")
     ap.add_argument("--force", action="store_true",

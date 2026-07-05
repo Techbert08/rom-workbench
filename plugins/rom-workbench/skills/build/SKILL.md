@@ -128,39 +128,45 @@ The correction field is only 510 wide, so a patch that perturbs the byte-sum by 
 - **Banked addresses** (`$NNNN@pXX`) use the same `SIZE_TO_FIRST_PAGE` table as
   `rom.py`; a 128 KiB CPU ROM has first page `$38` (banked pages `$38-$3D`).
 
-The Whitestar boot self-test sums **every CPU-ROM byte into an 8-bit accumulator**
-and requires the total to be `0xFF`; alternatively, if the word at `$FFEE` is
-`0xFFFF` the test is skipped. So:
+The game's boot self-test (`$9F62` in LOTR) sums **every CPU-ROM byte into an
+8-bit accumulator** and requires the total to be `0xFF` (or, if the word at
+`$FFEE` is `0xFFFF`, the test is skipped) — that is all PinMAME ever exercises.
+But the factory ROM also satisfies a stronger invariant the boot code does *not*
+itself verify: **the full 16-bit byte-sum equals the stored word at `$FFEE`**
+(e.g. LOTR `0x84FF`). A real board's BIOS / service-menu ROM check very likely
+recomputes that 16-bit sum and compares it to the stored word, so an 8-bit-only
+fixup boots in PinMAME yet fails on hardware. `build.py` therefore restores the
+**full 16-bit sum**, which makes the 8-bit low byte correct too. So:
 
-- **Real checksum** (default): make `(sum of all bytes) & 0xFF == 0xFF`. `build.py`
-  absorbs the patch's effect into one unused `0xFF` padding byte (auto-found by
-  scanning backward from `$FFEC`, clear of the checksum word / delta slot / 6809
-  vectors). No-op if the sum is already correct.
-- **`--checksum-blank <addr>`**: use an *explicit*, disassembly-verified free-byte
-  address instead of the auto-scan — e.g. `--checksum-blank '$F974'`. Since the
-  self-test wraps mod 256, one byte always suffices no matter how much the
-  patches shift the sum (the pad byte's value just gets set to whatever residue
-  is needed). Useful for real/replacement CPU boards that re-run this same
-  8-bit self-test independently: pinning the correction to a known location
-  (ideally one already reserved as spare space by your patch, e.g. right after
-  a code stub) makes the build deterministic and reviewable instead of an
-  implicit runtime choice. Set a per-project default via `game.json`'s
-  `checksum_blank` key so it applies to every build without repeating the flag
-  (an explicit `--checksum-blank` still overrides it). Mutually exclusive with
-  `--disable-checksum`.
-  > **Not for restoring the exact factory byte-sum.** The self-test only checks
-  > the sum mod 256; it does not — and cannot — restore the *exact* pre-patch
-  > total. That's mathematically impossible once a patch replaces part of the
-  > `0xFF` free-space run with real code: `0xFF` is the maximum byte value, so
-  > the pad byte (also originally `0xFF`) can only be *lowered*, never raised,
-  > and can't compensate for the sum decrease from writing lower-valued opcode
-  > bytes elsewhere. If a board needs more than the documented mod-256 check
-  > (e.g. an independent CRC/hash of the whole ROM), no filler-byte trick can
-  > satisfy it — the ROM's content has genuinely changed.
+- **Real checksum** (default): make `(sum of all bytes) & 0xFFFF == the stored
+  $FFEE word`, leaving `$FFEE` **byte-identical to factory**. `build.py` absorbs
+  the patch's effect into unused `0xFF` padding bytes. The sum is mod 2¹⁶, so
+  even when a patch *lowered* it (and spare `0xFF` bytes can only lower it
+  further) the target is reached by lowering to **wrap around**: reduce by
+  `R = (cur − target) & 0xFFFF`, spread across `ceil(R/255)` pad bytes (a few
+  typically, ≤258 worst case), all below `$FFEC` and clear of the checksum word /
+  delta slot / 6809 vectors. No-op if already correct.
+- **`--checksum-blank <addr>`**: pin the pad to an *explicit*, disassembly-verified
+  free-space **region start** instead of the auto-scan — e.g.
+  `--checksum-blank '$F974'`. The fixup consumes as many **contiguous** `0xFF`
+  bytes forward as the correction needs, so make sure the run is long enough
+  (build errors out if it hits a non-`0xFF` byte or would overrun `$FFEC`).
+  Useful for real/replacement CPU boards that re-run a ROM check independently:
+  pinning to a known location (ideally spare space reserved by your patch, e.g.
+  right after a code stub) makes the build deterministic and reviewable. Set a
+  per-project default via `game.json`'s `checksum_blank` key (an explicit
+  `--checksum-blank` overrides it). Mutually exclusive with `--disable-checksum`.
+  > **Requires enough spare `0xFF` free space.** Restoring the 16-bit sum can
+  > need up to 258 padding bytes (worst case). If the ROM has fewer spare `0xFF`
+  > bytes below `$FFEC` the build errors out — free space, or use
+  > `--disable-checksum`. Note this restores the *sum*, matching any 8-bit or
+  > 16-bit sum check; a board that verifies an independent CRC/hash of the whole
+  > ROM cannot be satisfied by filler bytes, because the content genuinely changed.
 - **Disabled** (`--disable-checksum`): writes `0xFFFF` at `$FFEE`.
 
-(Whitestar uses a single 8-bit byte-sum target — there is no WPC-style delta word.
-`rom.py info`'s WPC-model checksum/version line is not meaningful for Whitestar.)
+(Whitestar's stored `$FFEE` word is the ROM's 16-bit byte-sum, not a WPC-style
+delta word. `rom.py info`'s WPC-model checksum/version line is not meaningful for
+Whitestar. Tests: `plugins/rom-workbench/tests/test_whitestar_checksum.py`.)
 
 ## Parameters
 

@@ -32,7 +32,7 @@
         },
         "checksum_blank": {
             "type": "string",
-            "description": "Whitestar only. Default for build.py's --checksum-blank: address (build.py address syntax) of a confirmed-blank (0xFF), patch-untouched byte used as the checksum-correction pad, instead of build.py's default backward-scan-from-$FFEC. Pins the correction to an explicit, disassembly-verified free-space location rather than an implicit runtime choice. An explicit --checksum-blank CLI flag overrides this."
+            "description": "Whitestar only. Default for build.py's --checksum-blank: START address (build.py address syntax) of a confirmed-blank (0xFF), patch-untouched free-space REGION used as the checksum-correction pad, instead of build.py's default backward-scan-from-$FFEC. The fixup restores the full 16-bit ROM sum to the stored $FFEE word and consumes as many contiguous 0xFF bytes forward as needed (a few typically, up to 258 worst case), so the run must be long enough. Pins the correction to an explicit, disassembly-verified location rather than an implicit runtime choice. An explicit --checksum-blank CLI flag overrides this."
         },
         "table": {
             "type": "string",
